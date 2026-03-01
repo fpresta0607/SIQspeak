@@ -20,7 +20,7 @@ There is no build step, test suite, or linter configured. The app is a single `d
 
 ## Architecture
 
-Single-file (`dictate.py`, ~900 lines). No modules, no packages.
+Single-file (`dictate.py`, ~1300 lines). No modules, no packages.
 
 **Flow:** `main()` loads model → starts pystray in background thread → runs unified Win32 message loop on main thread (handles hotkey, overlay animation, and hover/click events).
 
@@ -31,19 +31,26 @@ Single-file (`dictate.py`, ~900 lines). No modules, no packages.
 **State management:** `set_state("idle" | "recording" | "transcribing")` drives both tray icon color and overlay mode. Thread-safe via atomic global write (`_overlay_target_state`) under CPython GIL; main thread reads it each timer tick.
 
 **Overlay (two modes):**
-- Idle: small 36x36 circle with "i" icon, hoverable — shows transcription history panel on hover
-- Active: 150x40 pill with audio-reactive dots, click-through (`WS_EX_TRANSPARENT`)
+- Idle: 110x36 toolbar with 3 clickable icon zones (info "i", model hexagon, gear). Click toggles panels. NOT click-through.
+- Active: 120x32 pill with 6 audio-reactive dots, click-through (`WS_EX_TRANSPARENT`)
 
-Rendered via `UpdateLayeredWindow` with pre-multiplied alpha BGRA buffers from numpy. Animates at ~30fps via `SetTimer`. Never steals focus — shown via `SW_SHOWNA`.
+Rendered via `UpdateLayeredWindow` with pre-multiplied alpha BGRA buffers from numpy. Animates at ~30fps via `SetTimer`. Never steals focus — shown via `SW_SHOWNA`. Topmost re-asserted every ~2s via `SetWindowPos`.
 
-**Log panel:** Appears on hover over idle pill. Shows recent transcriptions with timestamps and copy buttons. Uses `pyperclip` for clipboard. Auto-hides with 300ms grace period.
+**Panels (click-activated, one at a time):**
+- **Log panel:** Shows recent transcriptions with timestamps and copy buttons. Uses `pyperclip` for clipboard.
+- **Model selector:** Lists available models (tiny, base, small, medium, large-v2, large-v3) with checkmark on loaded model. Click to load a different model in background thread.
+- **Settings panel:** Quit button.
+
+Clicking an icon toggles its panel; clicking outside pill+panel dismisses it. All panels auto-hide when recording starts.
+
+**DPI awareness:** `SetProcessDpiAwareness(2)` called before any Win32 calls to ensure correct positioning on high-DPI displays.
 
 **Color palette:** Dark blue (20,40,80), cyan (0,200,220), gray (140,140,150), white (230,240,255). Recording = cyan dots. Transcribing = white dots.
 
 **Threading model:**
-- Main thread: Win32 message loop (`GetMessageW`) handles `WM_HOTKEY` + `WM_TIMER`
+- Main thread: Win32 message loop (`GetMessageW`) handles `WM_HOTKEY` + `WM_TIMER` + click detection
 - Background daemon: pystray tray icon
-- Temporary daemon threads: `_wait_for_release()` polling, transcription
+- Temporary daemon threads: `_wait_for_release()` polling, transcription, model loading
 
 **Text input:** `type_text()` uses `SendInput` with `KEYEVENTF_UNICODE` to type directly into the focused window. No clipboard involved in the paste flow.
 
@@ -53,7 +60,8 @@ Rendered via `UpdateLayeredWindow` with pre-multiplied alpha BGRA buffers from n
 
 All config is hardcoded at the top of `dictate.py`:
 
-- `MODEL_NAME` — `"tiny"` (faster-whisper handles cache resolution and auto-download)
+- `MODEL_NAME` — `"tiny"` default (changeable at runtime via model selector panel)
+- `AVAILABLE_MODELS` — tiny, base, small, medium, large-v2, large-v3
 - `SAMPLE_RATE` — 16000 Hz
 - `HOTKEY` — Ctrl+Shift+Space (via `RegisterHotKey`)
 - Inference: CPU-only, int8 quantization, beam_size=1, English-only, no VAD filter
