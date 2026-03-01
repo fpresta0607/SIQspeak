@@ -5,11 +5,14 @@ Runs silently in the system tray. Gray = idle, Cyan = recording, Blue = transcri
 Floating pill with 3-icon toolbar (info, model selector, settings); click to toggle panels.
 """
 
+import base64
 import ctypes
 import ctypes.wintypes
+import io
 import logging
 import math
 import os
+import queue
 import sys
 import threading
 import time
@@ -51,6 +54,20 @@ log = logging.getLogger("dictate")
 MODEL_NAME = "tiny"
 SAMPLE_RATE = 16000
 
+# Streaming transcription (type-as-you-talk)
+STREAM_MODE = False                 # opt-in; toggled via settings panel
+SILENCE_RMS_THRESHOLD = 0.015       # raw RMS below this = silence
+SILENCE_DURATION = 0.7              # seconds of silence before dispatching chunk
+MIN_CHUNK_DURATION = 0.5            # minimum audio length (seconds) to transcribe
+
+# Known Whisper hallucination phrases (matched after lowercasing + stripping punctuation)
+_HALLUCINATION_PATTERNS = {
+    "thank you", "thanks for watching", "subscribe",
+    "like and subscribe", "see you next time",
+    "please subscribe", "you", "bye", "goodbye",
+    "thanks for watching and see you next time",
+}
+
 # Win32 hotkey: Ctrl+Shift+Space
 HOTKEY_ID = 1
 HOTKEY_MOD = 0x0002 | 0x0004  # MOD_CONTROL | MOD_SHIFT
@@ -74,6 +91,29 @@ TRAY_COLORS = {
 STATE_TRAY_COLOR = {"idle": "gray", "recording": "cyan", "transcribing": "blue"}
 
 # ---------------------------------------------------------------------------
+# Embedded Lucide-style icons (96x96 white-on-transparent PNGs, bold strokes)
+# Rendered at high res for crisp LANCZOS downscaling to display size.
+# ---------------------------------------------------------------------------
+_ICON_INFO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAACiklEQVR4nO2d227EMAhETdT//2UqVdUqajeb2AYP4DnvG5sZ42xu0BohhJBdkZYAVdWR34lI+PikkuAZDZHKgmcwRHYUPpIRsrPwEYxYOmBU4ZFGSBbhpVMUxJhDY3gPMCKEOAUeaS6v43sduDdYWbz/RpkffKUJ+K8geq6CCggtfJR5y+ogogmPjkF2XvUR4pk+QIVVj4ztaM54iq8nPI4f/jrgLnDE/3lxGNMzziOb+AjuYpnJwCOb+HozNmo7Gh2324CdVv4KE0xPwpXF94rxiHzyGxlnyT+XD2P0ZsGRSfxIWJnw1RIHr6dAsy6CR5Pm6vfTZuoknHXVWeJ+KyLLc9yIPNFuOAO4+hfciuDqn+dOw6EM4Oq30+TSAK5+Oz5peWRd/Xp6DuD5TMBbG/cHMh7ohdgRTChvgIJuRy814CqIKNtPZK40utI0XQZUgwaAoQHRDMh2EsvEO20fZwBPwM/p0YpbEBgaAIYGgKEBYGgAGBoAhgaAoQFgaAAYGgCGBoAxeTmXjGv1zwDedPPjnbbcgsDQADA0IKIBvU/2yfgbJcwAMDQAjPl3wjujlt8J83rAjk9aupQq2BH1KFXALJjnTkO3aik7oZ7VUpgF47h/J8wsaNMaHKuLU1RCDepn8EIMjMnLuTtmgRpVj+nKAJpgX7zEdAvaIRPUOEbz74Qrm6AO9fJcShV4miCgkmVexQrdqqUgTJBk4v/8tk1SvYylOsfnfh2Q+ZygC+bO8vXZy9dXK2WvGRs4VGjmoBVamERpjJNprmxjVbGNVdTmaRpoLq/jtwWwleE1obvXoSjXzDOLEVK9nW1UI2S3hs5/UbY0j4Um7gvWS7gJWRoSUXBCCCGk/fINNEe8jLUjW4wAAAAASUVORK5CYII="
+_ICON_HEXAGON_B64 = "iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAABWUlEQVR42u3dO3KEMBREUXrK+98yjpxM5gDeR+duANRXoCoota4LAAAAAAAM4r7ve/L9Z1PwSUJA8YyfJiFbXzdTRGT7e767iJywwHaWkMnBfwc7cX3IhuAnL9TZurhOkZAts36qiGwNfoqIbA/+v9d+W0ROCL7z05CTgu8oIj4b1IrIabO+m4ScHny1iAi+VkQEXyshfo7UjvPz2Oq+JPy/sTw1ns+km+0gor0AEEAACCAABBAAAggAAQSAAAJAAAEggAAQQAAIIAAEEAACCCAABBAAAggAAQSAAAIwW8D0Hs+3x/bz5I2eskvy6r5R2z7hF6oKOnbxrN8pv/FpGNkVsUHEiraUqSLW9QVNWR9WN2Z1fhqO6ozrFMDRrYnVIvSGFs1KzblFQemOLhShPb1IhPMDitaHyZ8/nCFDgFOUrk3f6af9e/hsai/c2tboLEkAAAAAwB5+AfUSGJCBCSObAAAAAElFTkSuQmCC"
+_ICON_GEAR_B64 = "iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAADAUlEQVR4nO2d246DMAxEcbX//8teUWmliqWQpLZn0sx5LrHx2CHkQrdNCCGEEEKIdXF3/0Zbd/wgjTswEK+2zcxQfhhb0C05GGj7Rx6VxgSBAHcZ5ondElv276gCwEAEQFSBE2b/jioADEyAyipw0uzfUQWAgSk/kp3eWBU91yCz/2l/A+PgaQG0APAuyJDTAODgUwiwOnABnGRCDgW0BL0zAK1dRla7GUAMj4xmZrI39XR0ZiCQtt/aqzTGMiZ3Ej+etqoMXd20gfpgBp8eq9xor+2qEVKTAJ84wxr8bBFar330NNjrEHvwM0TojdOtAMfGRoRgDn6UT2dxaRp1tTQ84vy76xiDP+p3xLA25CF8VH/W4F/5eLy/qId02apU1VutFb89t3DlE3RnXEZA/n43Q7XtpExu/TPyQTD8y20/WhtCZJQHdAOIKeeeeKVnx6hwHhy4bD9G2zfGh6IPtsnkSyth3cqZo9E3bAELMlE+RXXJ8CXJV67eH3pu+Or3DMuQtAKc8UmmzTAUpRHAFz2iFDYVkZF9RtxGlIgUFeCAjGSpAgoBsvtv5mcBrQCrIAHASAAwEgCMBABDK4AXnhHbVhfAEJtiSYamIQJkvSk6cRtfNxtqlRtiSbKfSgDk9kAkVALYxRx+TzCvfs+U/Ttakpx1SVKL8oBF+dE+Fb0zwort99hrPh+A2l+zEbTRS0+8ptkb6sVHT7U39E1AmQ7YRRByPqA1SLMEx2/8H4lJ+lTEq6FZ9uSc0ZI8kXtlhyugxYHZKsEB93pbAccGItRnrAQP2Ip+Fqu765q7oJHAM5zDrd5L2r2NciuA+biqg30rmYxjrQQnSAx9rAO9NrEVE3G2dkbbb+1tALJnUtH2eqB9AGadkPmk3QzgL0Su74ZiMdLvBS25JrwicAGc9D2gCvpvRVjyx7vRUI+CbLIvrEzZBa0OTIDKrDTgPzfdoQoAAxEA0ScbaRWoAsCUC4AckRhhFagCwFC9Bxjo6+kMc0JwfNGvpQghhBBCCLHV8wsqGXiPLBVKzgAAAABJRU5ErkJggg=="
+
+
+def _load_icon(b64: str, size: tuple[int, int], color: tuple[int, int, int]) -> Image.Image:
+    """Decode a base64 PNG, resize it, and tint to the given RGB color."""
+    data = base64.b64decode(b64)
+    img = Image.open(io.BytesIO(data)).convert("RGBA").resize(size, Image.LANCZOS)
+    # Tint: use source alpha, replace RGB with target color
+    r, g, b, a = img.split()
+    img = Image.merge("RGBA", (
+        a.point(lambda p: int(p / 255 * color[0])),
+        a.point(lambda p: int(p / 255 * color[1])),
+        a.point(lambda p: int(p / 255 * color[2])),
+        a,
+    ))
+    return img
+
+# ---------------------------------------------------------------------------
 # Globals
 # ---------------------------------------------------------------------------
 is_recording = False
@@ -94,13 +134,49 @@ _settings_panel_hwnd = None
 _active_panel: str | None = None  # "info" | "model" | "settings" | None
 _transcription_log: list[dict] = []  # {text, timestamp, time_epoch}
 _copy_debounce = False
+_copy_hover_row: int | None = None   # which log row's copy btn is hovered
+_copied_row: int | None = None       # which row just got copied (show checkmark)
+_copied_time: float = 0.0            # when the copy happened
+_log_entry_heights: list[int] = []   # cached row heights for click hit-testing
+
+# Streaming transcription state
+_stream_queue: queue.Queue | None = None
+_stream_worker: threading.Thread | None = None
+_silence_count = 0                  # consecutive silent audio callbacks
+_transcribed_idx = 0                # audio_chunks index: everything before this is dispatched
+_stream_focus_done = False          # focus target window only once per session
+_stream_texts: list[str] = []       # collect typed texts for transcription log entry
 _pill_current_mode = "idle"  # tracks which pill size is displayed
+
+# Drag-to-reposition state
+_drag_active = False
+_drag_pending = False       # mouse down on pill, waiting to see if it's a drag or click
+_drag_start_x = 0
+_drag_start_y = 0
+_drag_pill_x = 0
+_drag_pill_y = 0
+_pill_user_x: int | None = None  # user-chosen pill X (None = default center)
+_pill_user_y: int | None = None  # user-chosen pill Y (None = default bottom)
+
 _idle_click_debounce = False
 _model_click_debounce = False
 _settings_click_debounce = False
 _model_loading = False
 _model_loading_name = ""
 _loaded_model_name = MODEL_NAME
+_download_progress: float = 0.0
+_download_confirm_name: str | None = None
+_download_error: str | None = None
+_download_error_time: float = 0.0
+_welcome_hwnd = None
+_welcome_shown = False
+_welcome_show_time = 0.0
+_hover_zone: int | None = None  # which icon zone (0/1/2) cursor is over
+
+
+def _set_hover_zone(zone: int | None) -> None:
+    global _hover_zone
+    _hover_zone = zone
 
 # ---------------------------------------------------------------------------
 # Tray icon
@@ -114,7 +190,14 @@ def _load_tray_icon() -> Image.Image:
     global _tray_icon_img
     if _tray_icon_img is None:
         ico_path = os.path.join(SCRIPT_DIR, "dictate.ico")
-        _tray_icon_img = Image.open(ico_path).resize((64, 64), Image.LANCZOS).convert("RGBA")
+        from PIL import ImageFilter
+        # Two-step downscale + sharpen for crisp tray icon
+        src = Image.open(ico_path).convert("RGBA")
+        _tray_icon_img = (
+            src.resize((128, 128), Image.LANCZOS)
+               .resize((64, 64), Image.LANCZOS)
+               .filter(ImageFilter.UnsharpMask(radius=1.0, percent=60, threshold=2))
+        )
     return _tray_icon_img
 
 
@@ -208,18 +291,19 @@ class INPUT(ctypes.Structure):
 # ---------------------------------------------------------------------------
 # Text input via SendInput KEYEVENTF_UNICODE (no clipboard needed)
 # ---------------------------------------------------------------------------
-def type_text(text: str) -> None:
+def type_text(text: str, release_modifiers: bool = True) -> None:
     """Type text into the focused window using Unicode keyboard events."""
     user32 = ctypes.windll.user32
 
-    # Release any held modifiers first (Ctrl, Shift, Alt from hotkey)
-    release = (INPUT * 3)()
-    for i, vk in enumerate((VK_CONTROL, 0x10, 0x12)):
-        release[i].type = INPUT_KEYBOARD
-        release[i].ki.wVk = vk
-        release[i].ki.dwFlags = KEYEVENTF_KEYUP
-    user32.SendInput(3, ctypes.pointer(release[0]), ctypes.sizeof(INPUT))
-    time.sleep(0.05)
+    if release_modifiers:
+        # Release any held modifiers first (Ctrl, Shift, Alt from hotkey)
+        release = (INPUT * 3)()
+        for i, vk in enumerate((VK_CONTROL, 0x10, 0x12)):
+            release[i].type = INPUT_KEYBOARD
+            release[i].ki.wVk = vk
+            release[i].ki.dwFlags = KEYEVENTF_KEYUP
+        user32.SendInput(3, ctypes.pointer(release[0]), ctypes.sizeof(INPUT))
+        time.sleep(0.05)
 
     # Send each character as a Unicode key down + key up pair
     n = len(text) * 2
@@ -264,34 +348,92 @@ def focus_window(hwnd: int) -> None:
 # Overlay: idle icon + active pill with audio-reactive dots
 # ---------------------------------------------------------------------------
 # Idle: 3-icon toolbar (info, model, settings)
-IDLE_W = 110
-IDLE_H = 36
-IDLE_ICON_ZONE_W = 36  # each icon zone width
+IDLE_W = 160
+IDLE_H = 44
+IDLE_ICON_ZONE_W = 52  # each icon zone width
 
 # Active: compact pill with 6 dots
-ACTIVE_W = 120
-ACTIVE_H = 32
+ACTIVE_W = 180
+ACTIVE_H = 44
 NUM_DOTS = 6
-DOT_R = 2.5
-DOT_SPACING = 14.0
+DOT_R = 3.5
+DOT_SPACING = 20.0
 DOT_START_X = (ACTIVE_W - (NUM_DOTS - 1) * DOT_SPACING) / 2
 DOT_Y = ACTIVE_H / 2.0
 
 # Log panel
-LOG_PANEL_W = 320
-LOG_PANEL_ROW_H = 32
-LOG_PANEL_MAX_VISIBLE = 8
-LOG_PANEL_PADDING = 8
-LOG_PANEL_BG_ALPHA = 0.92
+LOG_PANEL_MAX_VISIBLE = 20
+LOG_PANEL_PADDING = 16
+LOG_PANEL_BG_ALPHA = 0.94
+_log_scroll_offset = 0  # scroll offset (number of entries scrolled)
 
 # Model selector panel
-MODEL_PANEL_W = 220
-MODEL_PANEL_ROW_H = 36
+MODEL_PANEL_ROW_H = 62
+MODEL_PANEL_HEADER_H = 52
 AVAILABLE_MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
+MODEL_SIZES_MB = {
+    "tiny": 75, "base": 141, "small": 464,
+    "medium": 1460, "large-v2": 2947, "large-v3": 2948,
+}
 
 # Settings panel
-SETTINGS_PANEL_W = 160
-SETTINGS_PANEL_H = 60
+SETTINGS_HEADER_H = 52
+
+
+def _screen_size() -> tuple[int, int]:
+    """Get primary screen width and height."""
+    user32 = ctypes.windll.user32
+    return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+
+
+def _log_panel_dims() -> tuple[int, int]:
+    """Compute log panel width and max height based on screen size."""
+    sw, sh = _screen_size()
+    w = max(500, min(int(sw * 0.45), 900))
+    h = max(400, min(int(sh * 0.65), 1000))
+    return w, h
+
+
+def _model_panel_width() -> int:
+    sw, _ = _screen_size()
+    return max(340, min(int(sw * 0.25), 440))
+
+
+def _settings_panel_width() -> int:
+    sw, _ = _screen_size()
+    return max(300, min(int(sw * 0.22), 380))
+
+
+# ---------------------------------------------------------------------------
+# Low-level mouse hook for wheel scroll support
+# ---------------------------------------------------------------------------
+_wheel_delta = 0  # accumulated wheel delta since last check
+
+class _MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("pt", ctypes.wintypes.POINT),
+        ("mouseData", ctypes.wintypes.DWORD),
+        ("flags", ctypes.wintypes.DWORD),
+        ("time", ctypes.wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+_HOOKPROC = ctypes.WINFUNCTYPE(
+    ctypes.c_long, ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM
+)
+
+def _mouse_hook_proc(nCode, wParam, lParam):
+    global _wheel_delta
+    if nCode >= 0 and wParam == 0x020A:  # WM_MOUSEWHEEL
+        data = ctypes.cast(lParam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
+        delta = ctypes.c_short((data.mouseData >> 16) & 0xFFFF).value
+        _wheel_delta += delta
+    return ctypes.windll.user32.CallNextHookEx(_mouse_hook, nCode, wParam, lParam)
+
+# Must prevent GC of the callback
+_mouse_hook_callback = _HOOKPROC(_mouse_hook_proc)
+_mouse_hook = None
+
 
 def _make_pill_mask(w: int, h: int) -> np.ndarray:
     """SDF-based rounded rectangle mask."""
@@ -325,38 +467,56 @@ _idle_mask = _make_pill_mask(IDLE_W, IDLE_H)
 _idle_bg = _make_pill_bg(IDLE_W, IDLE_H, _idle_mask)
 
 
-def _build_idle_frame() -> np.ndarray:
-    """Pre-render idle toolbar: 3-icon pill (info | model | settings)."""
+def _build_idle_frame(hover_zone: int | None = None) -> np.ndarray:
+    """Pre-render idle toolbar: 3-icon pill (info | model | settings).
+    hover_zone: 0 (info), 1 (model), 2 (settings), or None for no hover.
+    """
     buf = _idle_bg.copy()
     img = Image.new("RGBA", (IDLE_W, IDLE_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    try:
-        font = ImageFont.truetype("segoeui.ttf", 18)
-    except OSError:
-        font = ImageFont.load_default()
 
-    # Zone centers: 3 zones of IDLE_ICON_ZONE_W each, plus 2px gap between
+    # Zone centers: 3 zones of IDLE_ICON_ZONE_W each
     zone_w = IDLE_ICON_ZONE_W
     zone_centers = [zone_w // 2, IDLE_W // 2, IDLE_W - zone_w // 2]
 
+    # Zone boundaries for hover highlight
+    zone_lefts = [0, zone_w, IDLE_W - zone_w]
+    zone_rights = [zone_w, IDLE_W - zone_w, IDLE_W]
+
+    # Draw hover highlight behind the hovered zone
+    if hover_zone is not None and 0 <= hover_zone <= 2:
+        zl = zone_lefts[hover_zone] + 2
+        zr = zone_rights[hover_zone] - 2
+        draw.rounded_rectangle(
+            [zl, 3, zr, IDLE_H - 3],
+            radius=8,
+            fill=(255, 255, 255, 25),
+        )
+
     # Separator lines between zones
     for sep_x in [zone_w, IDLE_W - zone_w]:
-        draw.line([(sep_x, 8), (sep_x, IDLE_H - 8)], fill=(*GRAY, 60))
+        draw.line([(sep_x, 10), (sep_x, IDLE_H - 10)], fill=(*GRAY, 60))
 
-    # --- Left icon: info "i" (cyan) ---
-    _draw_centered_text(draw, "i", zone_centers[0], IDLE_H // 2, font, (*CYAN, 220))
+    # Icon colors: brighten on hover
+    default_colors = [CYAN, WHITE, GRAY]
+    hover_colors = [(100, 240, 255), (255, 255, 255), (200, 200, 210)]
+    colors = [
+        hover_colors[i] if hover_zone == i else default_colors[i]
+        for i in range(3)
+    ]
 
-    # --- Center icon: model hexagon (white) ---
-    cx, cy = zone_centers[1], IDLE_H // 2
-    r = 9
-    hexagon = []
-    for k in range(6):
-        angle = math.radians(60 * k - 90)
-        hexagon.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
-    draw.polygon(hexagon, outline=(*WHITE, 200), fill=None)
+    # Load and paste Lucide icons (26x26, centered in each zone)
+    icon_size = (26, 26)
+    icon_imgs = [
+        _load_icon(_ICON_INFO_B64, icon_size, colors[0]),
+        _load_icon(_ICON_HEXAGON_B64, icon_size, colors[1]),
+        _load_icon(_ICON_GEAR_B64, icon_size, colors[2]),
+    ]
 
-    # --- Right icon: gear (gray) ---
-    _draw_gear_icon(draw, zone_centers[2], IDLE_H // 2, 9, GRAY)
+    for icon_img, cx in zip(icon_imgs, zone_centers):
+        ix = cx - icon_img.width // 2
+        iy = IDLE_H // 2 - icon_img.height // 2
+        img.paste(icon_img, (ix, iy), icon_img)
 
     # Composite onto pill background
     pixels = np.array(img, dtype=np.float32) / 255.0
@@ -379,37 +539,6 @@ def _draw_centered_text(
     y = cy - th // 2 - bbox[1]
     draw.text((x, y), text, fill=fill, font=font)
 
-
-def _draw_gear_icon(
-    draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, color: tuple,
-) -> None:
-    """Draw a simple gear icon using circles and notches."""
-    # Outer circle
-    draw.ellipse(
-        [cx - r, cy - r, cx + r, cy + r],
-        outline=(*color, 200), fill=None, width=1,
-    )
-    # Inner circle
-    ir = r * 0.45
-    draw.ellipse(
-        [cx - ir, cy - ir, cx + ir, cy + ir],
-        fill=(*color, 180),
-    )
-    # Teeth (8 small rectangles radiating outward)
-    for k in range(8):
-        angle = math.radians(45 * k)
-        tooth_inner = r - 2
-        tooth_outer = r + 2
-        dx = math.cos(angle)
-        dy = math.sin(angle)
-        x1 = cx + dx * tooth_inner
-        y1 = cy + dy * tooth_inner
-        x2 = cx + dx * tooth_outer
-        y2 = cy + dy * tooth_outer
-        draw.line([(x1, y1), (x2, y2)], fill=(*color, 200), width=2)
-
-
-_idle_frame = _build_idle_frame()
 
 DOT_COLOR = {"recording": CYAN, "transcribing": WHITE}
 
@@ -519,10 +648,14 @@ def _create_overlay_window() -> int:
         | 0x00000080  # WS_EX_TOOLWINDOW
     )
     # Note: no WS_EX_TRANSPARENT — idle pill is hoverable
-    sw = user32.GetSystemMetrics(0)
-    sh = user32.GetSystemMetrics(1)
-    x = (sw - IDLE_W) // 2
-    y = sh - IDLE_H - 80
+    if _pill_user_x is not None:
+        x = _pill_user_x
+        y = _pill_user_y
+    else:
+        sw = user32.GetSystemMetrics(0)
+        sh = user32.GetSystemMetrics(1)
+        x = (sw - IDLE_W) // 2
+        y = sh - IDLE_H - 80
     return user32.CreateWindowExW(
         WS_EX, "STATIC", "", 0x80000000,  # WS_POPUP
         x, y, IDLE_W, IDLE_H,
@@ -560,79 +693,159 @@ def _set_pill_mode(mode: str) -> None:
         style = user32.GetWindowLongW(_overlay_hwnd, -20)
         user32.SetWindowLongW(_overlay_hwnd, -20, style | 0x00000020)
 
-    x = (sw - w) // 2
-    y = sh - h - 80
+    if _pill_user_x is not None:
+        x = _pill_user_x
+        y = _pill_user_y
+    else:
+        x = (sw - w) // 2
+        y = sh - h - 80
     # SWP_NOACTIVATE | SWP_NOZORDER
     user32.SetWindowPos(_overlay_hwnd, None, x, y, w, h, 0x0010 | 0x0004)
 
 
+def _wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
+    """Word-wrap text to fit within max_width pixels."""
+    words = text.split()
+    if not words:
+        return [text]
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        test = current + " " + word
+        if font.getlength(test) <= max_width:
+            current = test
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+LOG_HEADER_H = 72
+LOG_COPY_BTN_W = 48
+LOG_TEXT_LEFT = 90
+LOG_LINE_H = 28
+
+
 def _render_log_panel() -> tuple[np.ndarray, int, int]:
     """Render the log panel and return (bgra_buffer, width, height)."""
-    entries = list(reversed(_transcription_log[-LOG_PANEL_MAX_VISIBLE:]))
+    global _log_entry_heights
+    panel_w, max_h = _log_panel_dims()
+
+    total_entries = len(_transcription_log)
+    max_vis = LOG_PANEL_MAX_VISIBLE
+    # Apply scroll offset: offset=0 shows newest, offset>0 shows older
+    end = total_entries - _log_scroll_offset
+    start = max(0, end - max_vis)
+    entries = list(reversed(_transcription_log[start:end]))
     if not entries:
         entries = [{"text": "No transcriptions yet", "timestamp": "", "time_epoch": 0}]
 
-    # Help text header height
-    help_h = 44
-    row_count = len(entries)
-    panel_h = help_h + LOG_PANEL_PADDING * 2 + row_count * LOG_PANEL_ROW_H
-    panel_w = LOG_PANEL_W
+    try:
+        font_header = ImageFont.truetype("seguisb.ttf", 22)
+        font_sub = ImageFont.truetype("segoeui.ttf", 15)
+        font_text = ImageFont.truetype("seguisb.ttf", 18)
+        font_ts = ImageFont.truetype("segoeui.ttf", 14)
+        font_check = ImageFont.truetype("seguisb.ttf", 20)
+        font_scroll = ImageFont.truetype("segoeui.ttf", 14)
+    except OSError:
+        font_header = ImageFont.load_default()
+        font_sub = font_header
+        font_text = font_header
+        font_ts = font_header
+        font_check = font_header
+        font_scroll = font_header
+
+    text_max_w = panel_w - LOG_TEXT_LEFT - LOG_COPY_BTN_W - 20
+
+    entry_layouts = []
+    for entry in entries:
+        text = entry.get("text", "")
+        lines = _wrap_text(text, font_text, text_max_w) if text else [""]
+        row_h = max(len(lines) * LOG_LINE_H + 20, 54)
+        entry_layouts.append((lines, row_h))
+
+    _log_entry_heights = [rh for _, rh in entry_layouts]
+    content_h = sum(_log_entry_heights)
+    panel_h = min(LOG_HEADER_H + LOG_PANEL_PADDING * 2 + content_h + 8, max_h)
 
     img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Background rounded rect
     draw.rounded_rectangle(
         [0, 0, panel_w - 1, panel_h - 1],
-        radius=10,
+        radius=14,
         fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(LOG_PANEL_BG_ALPHA * 255)),
     )
 
-    try:
-        font = ImageFont.truetype("segoeui.ttf", 13)
-        font_small = ImageFont.truetype("segoeui.ttf", 11)
-    except OSError:
-        font = ImageFont.load_default()
-        font_small = font
+    draw.text((20, 14), "Transcription Log", fill=(*WHITE, 230), font=font_header)
+    draw.text((20, 42), "Hold Ctrl+Shift+Space to dictate  \u2022  Release to transcribe",
+              fill=(*GRAY, 150), font=font_sub)
+    draw.line([(20, LOG_HEADER_H - 4), (panel_w - 20, LOG_HEADER_H - 4)], fill=(*GRAY, 50))
 
-    # Help instructions at the top
-    draw.text((10, 6), "Hold Ctrl+Shift+Space to dictate", fill=(*GRAY, 180), font=font_small)
-    draw.text((10, 22), "Release to transcribe and paste", fill=(*GRAY, 180), font=font_small)
-    # Divider below help text
-    draw.line([(8, help_h - 4), (panel_w - 8, help_h - 4)], fill=(GRAY[0], GRAY[1], GRAY[2], 50))
+    # Scroll indicators
+    can_scroll_up = _log_scroll_offset > 0
+    can_scroll_down = total_entries > _log_scroll_offset + max_vis
+    if can_scroll_up:
+        draw.text((panel_w - 34, 16), "\u25b2", fill=(*CYAN, 150), font=font_scroll)
+    if can_scroll_down:
+        draw.text((panel_w - 34, panel_h - 22), "\u25bc", fill=(*CYAN, 150), font=font_scroll)
 
-    for idx, entry in enumerate(entries):
-        y = help_h + LOG_PANEL_PADDING + idx * LOG_PANEL_ROW_H
+    is_copied_fresh = _copied_row is not None and (time.time() - _copied_time) < 1.5
 
-        # Timestamp
+    y = LOG_HEADER_H + LOG_PANEL_PADDING
+    for idx, (entry, (wrapped_lines, row_h)) in enumerate(zip(entries, entry_layouts)):
+        if y + row_h > panel_h:
+            break
+
         ts = entry.get("timestamp", "")
         if ts:
-            draw.text((8, y + 6), ts, fill=(*GRAY, 200), font=font_small)
+            draw.text((20, y + 12), ts, fill=(*GRAY, 150), font=font_ts)
 
-        # Text (truncate if too long)
-        text = entry.get("text", "")
-        max_text_w = panel_w - 100
-        if font.getlength(text) > max_text_w:
-            while font.getlength(text + "...") > max_text_w and len(text) > 5:
-                text = text[:-1]
-            text += "..."
-        draw.text((58, y + 4), text, fill=(*WHITE, 240), font=font)
+        for li, line in enumerate(wrapped_lines):
+            draw.text((LOG_TEXT_LEFT, y + 10 + li * LOG_LINE_H), line,
+                       fill=(*WHITE, 245), font=font_text)
 
-        # Copy icon (small rectangle with "copy" indicator)
-        copy_x = panel_w - 32
-        draw.rounded_rectangle(
-            [copy_x, y + 4, copy_x + 24, y + 24],
-            radius=4,
-            fill=(CYAN[0], CYAN[1], CYAN[2], 60),
-        )
-        # Two overlapping squares as copy icon
-        draw.rectangle([copy_x + 6, y + 7, copy_x + 15, y + 18], outline=(*CYAN, 180), width=1)
-        draw.rectangle([copy_x + 10, y + 10, copy_x + 19, y + 21], outline=(*CYAN, 180), width=1)
+        # Copy button with hover / copied states (38x36)
+        copy_x = panel_w - LOG_COPY_BTN_W - 8
+        btn_cy = y + row_h // 2
+        is_hover = (_copy_hover_row == idx)
+        is_just_copied = (is_copied_fresh and _copied_row == idx)
 
-        # Divider line (except last)
-        if idx < row_count - 1:
-            div_y = y + LOG_PANEL_ROW_H - 1
-            draw.line([(8, div_y), (panel_w - 8, div_y)], fill=(GRAY[0], GRAY[1], GRAY[2], 40))
+        btn_hw = 19  # half-width
+        btn_hh = 18  # half-height
+
+        if is_just_copied:
+            draw.rounded_rectangle(
+                [copy_x, btn_cy - btn_hh, copy_x + btn_hw * 2, btn_cy + btn_hh],
+                radius=6, fill=(40, 180, 80, 100),
+            )
+            _draw_centered_text(draw, "\u2713", copy_x + btn_hw, btn_cy,
+                                font_check, (40, 220, 80, 255))
+        elif is_hover:
+            draw.rounded_rectangle(
+                [copy_x, btn_cy - btn_hh, copy_x + btn_hw * 2, btn_cy + btn_hh],
+                radius=6, fill=(*CYAN, 90),
+            )
+            draw.rectangle([copy_x + 9, btn_cy - 11, copy_x + 21, btn_cy + 6],
+                            outline=(*CYAN, 255), width=2)
+            draw.rectangle([copy_x + 16, btn_cy - 7, copy_x + 28, btn_cy + 10],
+                            outline=(*CYAN, 255), width=2)
+        else:
+            draw.rounded_rectangle(
+                [copy_x, btn_cy - btn_hh, copy_x + btn_hw * 2, btn_cy + btn_hh],
+                radius=6, fill=(*CYAN, 40),
+            )
+            draw.rectangle([copy_x + 9, btn_cy - 11, copy_x + 21, btn_cy + 6],
+                            outline=(*CYAN, 150), width=1)
+            draw.rectangle([copy_x + 16, btn_cy - 7, copy_x + 28, btn_cy + 10],
+                            outline=(*CYAN, 150), width=1)
+
+        if idx < len(entries) - 1:
+            div_y = y + row_h - 1
+            draw.line([(20, div_y), (panel_w - 20, div_y)], fill=(*GRAY, 30))
+
+        y += row_h
 
     return _rgba_to_premul_bgra(img), panel_w, panel_h
 
@@ -646,6 +859,10 @@ def _show_panel_window(hwnd: int, buf: np.ndarray, pw: int, ph: int) -> None:
     pill_center_x = px + pill_w // 2
     panel_x = pill_center_x - pw // 2
     panel_y = py - ph - 8
+    # Clamp to screen edges with 8px margin
+    sw, sh = _screen_size()
+    panel_x = max(8, min(panel_x, sw - pw - 8))
+    panel_y = max(8, panel_y)
     user32.SetWindowPos(hwnd, None, panel_x, panel_y, pw, ph, 0x0010 | 0x0004)
     _update_layered_window(hwnd, buf, pw, ph)
     user32.ShowWindow(hwnd, 8)  # SW_SHOWNA
@@ -653,9 +870,12 @@ def _show_panel_window(hwnd: int, buf: np.ndarray, pw: int, ph: int) -> None:
 
 def _show_log_panel() -> None:
     """Render and display the log panel above the pill."""
-    global _active_panel
+    global _active_panel, _log_scroll_offset
     if not _log_panel_hwnd or not _overlay_hwnd:
         return
+    # Reset scroll to newest on fresh open (not on re-render from scroll)
+    if _active_panel != "info":
+        _log_scroll_offset = 0
     buf, pw, ph = _render_log_panel()
     _show_panel_window(_log_panel_hwnd, buf, pw, ph)
     _active_panel = "info"
@@ -698,45 +918,156 @@ def _rgba_to_premul_bgra(img: Image.Image) -> np.ndarray:
     return (bgra * 255).clip(0, 255).astype(np.uint8)
 
 
+def _is_model_cached(name: str) -> bool:
+    """Check if a Whisper model is already downloaded in the HF cache."""
+    from faster_whisper.utils import _MODELS
+    from huggingface_hub import try_to_load_from_cache
+    repo_id = _MODELS.get(name)
+    if not repo_id:
+        return False
+    result = try_to_load_from_cache(repo_id, "model.bin")
+    return isinstance(result, str)
+
+
+def _check_internet() -> bool:
+    """Quick connectivity check to Hugging Face Hub."""
+    import urllib.request
+    try:
+        urllib.request.urlopen("https://huggingface.co", timeout=3)
+        return True
+    except Exception:
+        return False
+
+
+class _DownloadProgress:
+    """tqdm-compatible class that writes download progress to a global."""
+
+    def __init__(self, *args, **kwargs):
+        global _download_progress
+        self.total = kwargs.get("total", 0) or 0
+        self.n = 0
+        _download_progress = 0.0
+
+    def update(self, n=1):
+        global _download_progress
+        self.n += n
+        if self.total > 0:
+            _download_progress = min(self.n / self.total, 1.0)
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
 def _render_model_panel() -> tuple[np.ndarray, int, int]:
-    """Render the model selector panel."""
+    """Render the model selector panel with cache/download status."""
     row_count = len(AVAILABLE_MODELS)
-    panel_h = 8 + row_count * MODEL_PANEL_ROW_H + 8
-    panel_w = MODEL_PANEL_W
+    panel_w = _model_panel_width()
+    panel_h = MODEL_PANEL_HEADER_H + row_count * MODEL_PANEL_ROW_H + 16
 
     img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     draw.rounded_rectangle(
-        [0, 0, panel_w - 1, panel_h - 1], radius=10,
-        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.92 * 255)),
+        [0, 0, panel_w - 1, panel_h - 1], radius=14,
+        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.94 * 255)),
     )
 
     try:
-        font = ImageFont.truetype("segoeui.ttf", 14)
-        font_small = ImageFont.truetype("segoeui.ttf", 11)
+        font_title = ImageFont.truetype("seguisb.ttf", 22)
+        font = ImageFont.truetype("seguisb.ttf", 18)
+        font_small = ImageFont.truetype("seguisb.ttf", 14)
+        font_check = ImageFont.truetype("seguisb.ttf", 20)
     except OSError:
-        font = ImageFont.load_default()
+        font_title = ImageFont.load_default()
+        font = font_title
         font_small = font
+        font_check = font
+
+    # Header
+    draw.text((20, 12), "Models", fill=(*WHITE, 230), font=font_title)
+    draw.line([(20, MODEL_PANEL_HEADER_H - 4), (panel_w - 20, MODEL_PANEL_HEADER_H - 4)],
+              fill=(*GRAY, 50))
+
+    ORANGE = (255, 160, 50)
 
     for idx, name in enumerate(AVAILABLE_MODELS):
-        y = 8 + idx * MODEL_PANEL_ROW_H
+        y = MODEL_PANEL_HEADER_H + idx * MODEL_PANEL_ROW_H
         is_loaded = (name == _loaded_model_name)
-        is_loading = (_model_loading and name == _model_loading_name)
+        is_this_loading = (_model_loading and name == _model_loading_name)
+        is_downloading = (is_this_loading and _download_progress < 1.0
+                          and _download_progress > 0.0)
+        is_download_starting = (is_this_loading and _download_progress == 0.0
+                                and not _is_model_cached(name))
+        is_confirming = (name == _download_confirm_name and not _model_loading)
+        has_error = (_download_error and name == _model_loading_name
+                     and not _model_loading)
+        is_cached = _is_model_cached(name) if not is_loaded else True
+        size_mb = MODEL_SIZES_MB.get(name, 0)
 
-        # Checkmark or loading indicator
-        if is_loading:
-            draw.text((10, y + 8), "...", fill=(*CYAN, 200), font=font_small)
+        # Vertically center text in row
+        text_y = y + (MODEL_PANEL_ROW_H - 18) // 2
+
+        if has_error:
+            draw.text((54, text_y), name, fill=(*ORANGE, 240), font=font)
+            draw.text((panel_w - 20, text_y + 2), _download_error,
+                      fill=(*ORANGE, 200), font=font_small, anchor="ra")
+        elif is_downloading or is_download_starting:
+            draw.text((54, text_y - 4), name, fill=(*CYAN, 220), font=font)
+            if is_downloading:
+                pct_text = f"{int(_download_progress * 100)}%"
+                draw.text((panel_w - 20, text_y - 2), pct_text,
+                          fill=(*CYAN, 200), font=font_small, anchor="ra")
+                bar_x = 54
+                bar_y = y + MODEL_PANEL_ROW_H - 16
+                bar_w = panel_w - 54 - 20
+                bar_h = 4
+                draw.rounded_rectangle(
+                    [bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
+                    radius=2, fill=(*GRAY, 40))
+                fill_w = int(bar_w * _download_progress)
+                if fill_w > 0:
+                    draw.rounded_rectangle(
+                        [bar_x, bar_y, bar_x + fill_w, bar_y + bar_h],
+                        radius=2, fill=(*CYAN, 200))
+            else:
+                draw.text((panel_w - 20, text_y - 2), "connecting...",
+                          fill=(*GRAY, 150), font=font_small, anchor="ra")
+        elif is_this_loading:
+            draw.text((20, text_y), "...", fill=(*CYAN, 200), font=font_small)
+            draw.text((54, text_y), name, fill=(*CYAN, 220), font=font)
+            draw.text((panel_w - 20, text_y + 2), "loading...",
+                      fill=(*GRAY, 150), font=font_small, anchor="ra")
+        elif is_confirming:
+            draw.rounded_rectangle(
+                [4, y + 2, panel_w - 4, y + MODEL_PANEL_ROW_H - 2],
+                radius=8, fill=(*CYAN, 20))
+            draw.text((54, y + 10), name, fill=(*CYAN, 255), font=font)
+            confirm_text = f"Download ~{size_mb} MB?"
+            draw.text((54, y + 32), confirm_text,
+                      fill=(*CYAN, 180), font=font_small)
+            draw.text((panel_w - 20, y + 20), "click to confirm",
+                      fill=(*CYAN, 140), font=font_small, anchor="ra")
         elif is_loaded:
-            draw.text((10, y + 7), "\u2713", fill=(*CYAN, 255), font=font)
+            draw.text((20, text_y - 2), "\u2713", fill=(*CYAN, 255), font=font_check)
+            draw.text((54, text_y), name, fill=(*CYAN, 255), font=font)
+        elif is_cached:
+            draw.text((54, text_y), name, fill=(*WHITE, 220), font=font)
+            draw.text((panel_w - 20, text_y + 2), "ready",
+                      fill=(*GRAY, 100), font=font_small, anchor="ra")
+        else:
+            draw.text((54, text_y), name, fill=(*WHITE, 180), font=font)
+            size_label = f"~{size_mb} MB" if size_mb < 1000 else f"~{size_mb / 1000:.1f} GB"
+            draw.text((panel_w - 20, text_y + 2), size_label,
+                      fill=(*GRAY, 100), font=font_small, anchor="ra")
 
-        # Model name
-        text_color = (*CYAN, 255) if is_loaded else (*WHITE, 220)
-        draw.text((32, y + 8), name, fill=text_color, font=font)
-
-        # Divider
         if idx < row_count - 1:
             div_y = y + MODEL_PANEL_ROW_H - 1
-            draw.line([(8, div_y), (panel_w - 8, div_y)], fill=(*GRAY, 40))
+            draw.line([(20, div_y), (panel_w - 20, div_y)], fill=(*GRAY, 35))
 
     return _rgba_to_premul_bgra(img), panel_w, panel_h
 
@@ -761,29 +1092,72 @@ def _hide_model_panel() -> None:
 # Settings panel
 # ---------------------------------------------------------------------------
 def _render_settings_panel() -> tuple[np.ndarray, int, int]:
-    """Render settings panel with Quit button."""
-    panel_w, panel_h = SETTINGS_PANEL_W, SETTINGS_PANEL_H
+    """Render settings panel with stream toggle and Quit button."""
+    panel_w = _settings_panel_width()
+    # Dynamic height: header + stream row + gap + quit btn + bottom pad
+    stream_row_h = 44
+    quit_btn_h = 44
+    panel_h = SETTINGS_HEADER_H + stream_row_h + 12 + quit_btn_h + 20
 
     img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     draw.rounded_rectangle(
-        [0, 0, panel_w - 1, panel_h - 1], radius=10,
-        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.92 * 255)),
+        [0, 0, panel_w - 1, panel_h - 1], radius=14,
+        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.94 * 255)),
     )
 
     try:
-        font = ImageFont.truetype("segoeui.ttf", 14)
+        font_title = ImageFont.truetype("seguisb.ttf", 22)
+        font = ImageFont.truetype("seguisb.ttf", 17)
+        font_toggle = ImageFont.truetype("seguisb.ttf", 14)
+        font_btn = ImageFont.truetype("seguisb.ttf", 18)
     except OSError:
-        font = ImageFont.load_default()
+        font_title = ImageFont.load_default()
+        font = font_title
+        font_toggle = font
+        font_btn = font
+
+    # Header
+    draw.text((20, 12), "Settings", fill=(*WHITE, 230), font=font_title)
+    draw.line([(20, SETTINGS_HEADER_H - 4), (panel_w - 20, SETTINGS_HEADER_H - 4)],
+              fill=(*GRAY, 50))
+
+    # Stream toggle row
+    row_y = SETTINGS_HEADER_H + 8
+    label = "Stream mode"
+    draw.text((20, row_y + 10), label, font=font, fill=(230, 240, 255, 220))
+
+    # Toggle pill
+    pill_w, pill_h = 56, 28
+    pill_x = panel_w - pill_w - 20
+    pill_y = row_y + 8
+    if STREAM_MODE:
+        draw.rounded_rectangle(
+            [pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
+            radius=pill_h // 2, fill=(*CYAN, 180))
+        knob_x = pill_x + pill_w - pill_h + 4
+        draw.ellipse([knob_x, pill_y + 4, knob_x + pill_h - 8, pill_y + pill_h - 4],
+                     fill=(255, 255, 255, 240))
+        draw.text((pill_x + 8, pill_y + 6), "ON", font=font_toggle, fill=(15, 20, 35, 220))
+    else:
+        draw.rounded_rectangle(
+            [pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
+            radius=pill_h // 2, fill=(*GRAY, 80))
+        knob_x = pill_x + 4
+        draw.ellipse([knob_x, pill_y + 4, knob_x + pill_h - 8, pill_y + pill_h - 4],
+                     fill=(*GRAY, 200))
+        draw.text((pill_x + pill_w - 30, pill_y + 6), "OFF", font=font_toggle, fill=(*GRAY, 200))
 
     # Quit button — red rounded rect
-    btn_x, btn_y = 20, 14
-    btn_w, btn_h = panel_w - 40, 32
+    btn_x = 20
+    btn_y = row_y + stream_row_h + 12
+    btn_w = panel_w - 40
+    btn_h = quit_btn_h
     draw.rounded_rectangle(
         [btn_x, btn_y, btn_x + btn_w, btn_y + btn_h],
-        radius=6, fill=(180, 40, 40, 220),
+        radius=8, fill=(180, 40, 40, 220),
     )
-    _draw_centered_text(draw, "Quit", panel_w // 2, btn_y + btn_h // 2, font, (255, 255, 255, 240))
+    _draw_centered_text(draw, "Quit", panel_w // 2, btn_y + btn_h // 2, font_btn, (255, 255, 255, 240))
 
     return _rgba_to_premul_bgra(img), panel_w, panel_h
 
@@ -802,6 +1176,67 @@ def _hide_settings_panel() -> None:
     if _settings_panel_hwnd and _active_panel == "settings":
         ctypes.windll.user32.ShowWindow(_settings_panel_hwnd, 0)
         _active_panel = None
+
+
+# ---------------------------------------------------------------------------
+# Welcome tooltip (first-run, auto-dismisses after 5s)
+# ---------------------------------------------------------------------------
+WELCOME_W = 320
+WELCOME_H = 70
+
+
+def _render_welcome() -> np.ndarray:
+    """Render the welcome tooltip."""
+    img = Image.new("RGBA", (WELCOME_W, WELCOME_H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle(
+        [0, 0, WELCOME_W - 1, WELCOME_H - 1], radius=12,
+        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.94 * 255)),
+    )
+
+    try:
+        font_main = ImageFont.truetype("segoeuib.ttf", 15)  # bold
+        font_sub = ImageFont.truetype("segoeui.ttf", 12)
+    except OSError:
+        try:
+            font_main = ImageFont.truetype("segoeui.ttf", 15)
+        except OSError:
+            font_main = ImageFont.load_default()
+        font_sub = font_main
+
+    # Main line: "Hold Ctrl+Shift+Space to dictate" with hotkey in cyan
+    prefix = "Hold "
+    hotkey = "Ctrl+Shift+Space"
+    suffix = " to dictate"
+    x = 20
+    y_main = 16
+    draw.text((x, y_main), prefix, fill=(*WHITE, 230), font=font_main)
+    x += int(font_main.getlength(prefix))
+    draw.text((x, y_main), hotkey, fill=(*CYAN, 255), font=font_main)
+    x += int(font_main.getlength(hotkey))
+    draw.text((x, y_main), suffix, fill=(*WHITE, 230), font=font_main)
+
+    # Sub line
+    draw.text((20, 42), "Release to transcribe and auto-type", fill=(*GRAY, 180), font=font_sub)
+
+    return _rgba_to_premul_bgra(img)
+
+
+def _show_welcome() -> None:
+    """Show the welcome tooltip above the pill."""
+    global _welcome_shown, _welcome_show_time
+    if not _welcome_hwnd or not _overlay_hwnd:
+        return
+    buf = _render_welcome()
+    _show_panel_window(_welcome_hwnd, buf, WELCOME_W, WELCOME_H)
+    _welcome_shown = True
+    _welcome_show_time = time.time()
+
+
+def _hide_welcome() -> None:
+    """Hide the welcome tooltip."""
+    if _welcome_hwnd:
+        ctypes.windll.user32.ShowWindow(_welcome_hwnd, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -850,20 +1285,74 @@ def _get_idle_icon_zone(cursor_x: int, pill_left: int) -> int | None:
 _ZONE_PANEL = {0: "info", 1: "model", 2: "settings"}
 
 
+_DRAG_THRESHOLD = 5  # pixels of movement before click becomes a drag
+
+
 def _handle_idle_pill_click() -> None:
-    """Detect click on idle pill and toggle the appropriate panel."""
-    global _idle_click_debounce
+    """Handle click/drag on idle pill. Short click = toggle panel; drag = reposition."""
+    global _idle_click_debounce, _drag_active, _drag_pending
+    global _drag_start_x, _drag_start_y, _drag_pill_x, _drag_pill_y
+    global _pill_user_x, _pill_user_y
     user32 = ctypes.windll.user32
 
-    if not (user32.GetAsyncKeyState(0x01) & 0x8000):
+    mouse_down = bool(user32.GetAsyncKeyState(0x01) & 0x8000)
+
+    if not mouse_down:
+        # --- Mouse released ---
+        if _drag_active:
+            # End drag — save position
+            px, py, _, _ = _pill_screen_rect()
+            _pill_user_x = px
+            _pill_user_y = py
+            _drag_active = False
+            _drag_pending = False
+            _idle_click_debounce = True
+            return
+
+        if _drag_pending:
+            # Was pressed on pill but didn't move enough — treat as click
+            _drag_pending = False
+            rect = ctypes.wintypes.RECT()
+            user32.GetWindowRect(_overlay_hwnd, ctypes.byref(rect))
+            zone = _get_idle_icon_zone(_drag_start_x, rect.left)
+            if zone is not None:
+                _toggle_panel(_ZONE_PANEL[zone])
+            _idle_click_debounce = True
+            return
+
         _idle_click_debounce = False
         return
 
+    # --- Mouse is down ---
     if _idle_click_debounce:
         return
 
+    if _drag_active:
+        # Continue dragging — move pill to follow cursor
+        pt = ctypes.wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        new_x = _drag_pill_x + (pt.x - _drag_start_x)
+        new_y = _drag_pill_y + (pt.y - _drag_start_y)
+        user32.SetWindowPos(_overlay_hwnd, None, new_x, new_y, IDLE_W, IDLE_H, 0x0010 | 0x0004)
+        # Reposition open panel to follow
+        if _active_panel and _active_panel in _PANEL_SHOW:
+            _PANEL_SHOW[_active_panel]()
+        return
+
+    if _drag_pending:
+        # Check if cursor has moved enough to start a drag
+        pt = ctypes.wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        dx = abs(pt.x - _drag_start_x)
+        dy = abs(pt.y - _drag_start_y)
+        if dx > _DRAG_THRESHOLD or dy > _DRAG_THRESHOLD:
+            _drag_active = True
+            _hide_all_panels()
+        return
+
+    # Fresh click — check what's under cursor
     if not _is_cursor_over_hwnd(_overlay_hwnd):
-        # Click outside pill — if also outside active panel, hide all
+        # Click outside pill — dismiss panels if also outside active panel
         if _active_panel:
             active_hwnd = {
                 "info": _log_panel_hwnd,
@@ -875,22 +1364,21 @@ def _handle_idle_pill_click() -> None:
                 _idle_click_debounce = True
         return
 
-    # Click is on the pill — determine zone
+    # Mouse down on pill — start tracking for drag-or-click
     pt = ctypes.wintypes.POINT()
     user32.GetCursorPos(ctypes.byref(pt))
     rect = ctypes.wintypes.RECT()
     user32.GetWindowRect(_overlay_hwnd, ctypes.byref(rect))
-
-    zone = _get_idle_icon_zone(pt.x, rect.left)
-    if zone is not None:
-        panel_name = _ZONE_PANEL[zone]
-        _toggle_panel(panel_name)
-    _idle_click_debounce = True
+    _drag_start_x = pt.x
+    _drag_start_y = pt.y
+    _drag_pill_x = rect.left
+    _drag_pill_y = rect.top
+    _drag_pending = True
 
 
 def _handle_model_click() -> None:
-    """Detect click on a model row in the model panel."""
-    global _model_click_debounce
+    """Detect click on a model row — two-click confirmation for uncached models."""
+    global _model_click_debounce, _download_confirm_name
     user32 = ctypes.windll.user32
 
     if not (user32.GetAsyncKeyState(0x01) & 0x8000):
@@ -901,6 +1389,10 @@ def _handle_model_click() -> None:
     if _model_loading or not _model_panel_hwnd or _active_panel != "model":
         return
     if not _is_cursor_over_hwnd(_model_panel_hwnd):
+        # Click outside panel — cancel confirmation if pending
+        if _download_confirm_name:
+            _download_confirm_name = None
+            _show_model_panel()
         return
 
     _model_click_debounce = True
@@ -909,18 +1401,31 @@ def _handle_model_click() -> None:
     rect = ctypes.wintypes.RECT()
     user32.GetWindowRect(_model_panel_hwnd, ctypes.byref(rect))
 
-    ry = pt.y - rect.top - 8
+    ry = pt.y - rect.top - MODEL_PANEL_HEADER_H
     row = ry // MODEL_PANEL_ROW_H
     if 0 <= row < len(AVAILABLE_MODELS):
         name = AVAILABLE_MODELS[row]
-        if name != _loaded_model_name:
+        if name == _loaded_model_name:
+            return
+
+        if _is_model_cached(name):
+            # Cached: load immediately
+            _download_confirm_name = None
             _start_model_load(name)
+        elif name == _download_confirm_name:
+            # Second click: confirmed — start download + load
+            _download_confirm_name = None
+            _start_model_download_and_load(name)
+        else:
+            # First click on uncached model: show confirmation
+            _download_confirm_name = name
+            _show_model_panel()
 
 
 
 def _handle_settings_click() -> None:
-    """Detect click on the Quit button in the settings panel."""
-    global _should_quit, _settings_click_debounce
+    """Detect click on stream toggle or Quit button in the settings panel."""
+    global _should_quit, _settings_click_debounce, STREAM_MODE
     user32 = ctypes.windll.user32
 
     if not (user32.GetAsyncKeyState(0x01) & 0x8000):
@@ -934,9 +1439,28 @@ def _handle_settings_click() -> None:
         return
 
     _settings_click_debounce = True
-    _should_quit = True
-    if icon:
-        icon.stop()
+
+    # Get click position relative to panel
+    pt = ctypes.wintypes.POINT()
+    user32.GetCursorPos(ctypes.byref(pt))
+    rect = ctypes.wintypes.RECT()
+    user32.GetWindowRect(_settings_panel_hwnd, ctypes.byref(rect))
+    ry = pt.y - rect.top
+
+    # Header: 0..SETTINGS_HEADER_H, Stream toggle: header+8..+52, Quit: header+64+
+    if ry < SETTINGS_HEADER_H:
+        return  # clicked header area
+    elif ry < SETTINGS_HEADER_H + 56:
+        # Toggle stream mode
+        STREAM_MODE = not STREAM_MODE
+        log.info("STREAM_MODE toggled to %s", STREAM_MODE)
+        buf, pw, ph = _render_settings_panel()
+        _show_panel_window(_settings_panel_hwnd, buf, pw, ph)
+    else:
+        # Quit button
+        _should_quit = True
+        if icon:
+            icon.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -971,6 +1495,144 @@ def _start_model_load(name: str) -> None:
     threading.Thread(target=_load, daemon=True).start()
 
 
+def _start_model_download_and_load(name: str) -> None:
+    """Download a model from HF Hub, then load it."""
+    global _model_loading, _model_loading_name, _download_progress, _download_error
+    if _model_loading:
+        return
+    _model_loading = True
+    _model_loading_name = name
+    _download_progress = 0.0
+    _download_error = None
+    log.info("Downloading model: %s (~%d MB)", name, MODEL_SIZES_MB.get(name, 0))
+
+    # Re-render panel to show download state
+    if _active_panel == "model" and _model_panel_hwnd:
+        buf, pw, ph = _render_model_panel()
+        _show_panel_window(_model_panel_hwnd, buf, pw, ph)
+
+    def _download_and_load():
+        global model, _model_loading, _loaded_model_name
+        global _download_error, _download_error_time, _download_progress
+
+        # Internet check
+        if not _check_internet():
+            _download_error = "No internet"
+            _download_error_time = time.time()
+            log.warning("No internet for model download: %s", name)
+            _model_loading = False
+            return
+
+        try:
+            import huggingface_hub
+            from faster_whisper.utils import _MODELS
+
+            repo_id = _MODELS[name]
+            allow_patterns = [
+                "config.json", "preprocessor_config.json",
+                "model.bin", "tokenizer.json", "vocabulary.*",
+            ]
+            model_path = huggingface_hub.snapshot_download(
+                repo_id, allow_patterns=allow_patterns,
+                tqdm_class=_DownloadProgress,
+            )
+            _download_progress = 1.0
+            log.info("Download complete: %s, loading...", name)
+
+            new_model = WhisperModel(model_path, device="cpu", compute_type="int8")
+            model = new_model
+            _loaded_model_name = name
+            log.info("Model loaded: %s", name)
+        except Exception:
+            _download_error = "Download failed"
+            _download_error_time = time.time()
+            log.exception("Failed to download/load model %s", name)
+        finally:
+            _model_loading = False
+
+    threading.Thread(target=_download_and_load, daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# Streaming transcription worker
+# ---------------------------------------------------------------------------
+def _transcription_worker() -> None:
+    """Background thread: pull audio segments from queue, transcribe, type."""
+    global _stream_focus_done
+
+    while True:
+        item = _stream_queue.get()
+        kind, payload = item
+
+        if kind == "stop":
+            break
+
+        if kind == "segment":
+            segment_chunks = payload
+            done_event = None
+        elif kind == "flush":
+            segment_chunks, done_event = payload
+        else:
+            continue
+
+        try:
+            audio = np.concatenate(segment_chunks)
+            duration = len(audio) / SAMPLE_RATE
+
+            t0 = time.perf_counter()
+            segments, _ = model.transcribe(
+                audio,
+                beam_size=1,
+                language="en",
+                vad_filter=True,
+                vad_parameters=dict(
+                    min_speech_duration_ms=250,
+                    min_silence_duration_ms=500,
+                ),
+                no_speech_threshold=0.6,
+                condition_on_previous_text=False,
+                suppress_blank=True,
+            )
+            filtered = []
+            for seg in segments:
+                t = seg.text.strip()
+                if not t:
+                    continue
+                if seg.no_speech_prob > 0.6 and seg.avg_logprob < -1.0:
+                    log.info("STREAM SKIP (no_speech=%.2f logprob=%.2f): %s",
+                             seg.no_speech_prob, seg.avg_logprob, t)
+                    continue
+                if t.lower().rstrip(".!?,") in _HALLUCINATION_PATTERNS:
+                    log.info("STREAM SKIP (hallucination): %s", t)
+                    continue
+                filtered.append(t)
+            text = " ".join(filtered).strip()
+            elapsed = time.perf_counter() - t0
+            log.info("STREAM TRANSCRIBE %.3fs -> %s", elapsed, text)
+
+            if text:
+                _stream_texts.append(text)
+
+                if not _stream_focus_done and _target_hwnd:
+                    try:
+                        focus_window(_target_hwnd)
+                        time.sleep(0.15)
+                    except Exception:
+                        log.exception("STREAM: focus_window failed")
+                    _stream_focus_done = True
+
+                try:
+                    type_text(text + " ")
+                except Exception:
+                    log.exception("STREAM: type_text failed")
+
+        except Exception:
+            log.exception("STREAM: transcription error")
+        finally:
+            if done_event:
+                done_event.set()
+
+
 def _is_cursor_over_hwnd(hwnd: int) -> bool:
     """Check if the mouse cursor is over a window."""
     if not hwnd:
@@ -983,9 +1645,47 @@ def _is_cursor_over_hwnd(hwnd: int) -> bool:
     return rect.left <= pt.x <= rect.right and rect.top <= pt.y <= rect.bottom
 
 
+def _update_copy_hover() -> None:
+    """Update _copy_hover_row based on cursor position over copy buttons."""
+    global _copy_hover_row
+    if _active_panel != "info" or not _log_panel_hwnd:
+        _copy_hover_row = None
+        return
+    if not _is_cursor_over_hwnd(_log_panel_hwnd):
+        _copy_hover_row = None
+        return
+
+    user32 = ctypes.windll.user32
+    pt = ctypes.wintypes.POINT()
+    user32.GetCursorPos(ctypes.byref(pt))
+    rect = ctypes.wintypes.RECT()
+    user32.GetWindowRect(_log_panel_hwnd, ctypes.byref(rect))
+    rx = pt.x - rect.left
+    ry = pt.y - rect.top
+
+    # Check if cursor is in the copy button column
+    panel_w, _ = _log_panel_dims()
+    copy_x = panel_w - LOG_COPY_BTN_W - 8
+    if rx < copy_x or rx > copy_x + LOG_COPY_BTN_W:
+        _copy_hover_row = None
+        return
+
+    # Walk variable-height rows
+    y_acc = LOG_HEADER_H + LOG_PANEL_PADDING
+    entries_count = min(len(_transcription_log), LOG_PANEL_MAX_VISIBLE)
+    for idx, entry_h in enumerate(_log_entry_heights):
+        if idx >= entries_count:
+            break
+        if y_acc <= ry < y_acc + entry_h:
+            _copy_hover_row = idx
+            return
+        y_acc += entry_h
+    _copy_hover_row = None
+
+
 def _handle_copy_click() -> None:
     """Check if user clicked a copy button in the log panel."""
-    global _copy_debounce
+    global _copy_debounce, _copied_row, _copied_time
     user32 = ctypes.windll.user32
 
     # VK_LBUTTON
@@ -1005,23 +1705,34 @@ def _handle_copy_click() -> None:
     rx = pt.x - rect.left
     ry = pt.y - rect.top
 
-    # Check if in copy button column
-    copy_x = LOG_PANEL_W - 32
-    if rx < copy_x or rx > copy_x + 24:
+    # Check if in copy button column (right edge of panel)
+    panel_w, _ = _log_panel_dims()
+    copy_x = panel_w - LOG_COPY_BTN_W - 8
+    if rx < copy_x or rx > copy_x + LOG_COPY_BTN_W:
         return
 
-    # Determine which row (44px help header + padding)
-    row = (ry - 44 - LOG_PANEL_PADDING) // LOG_PANEL_ROW_H
-    entries = list(reversed(_transcription_log[-LOG_PANEL_MAX_VISIBLE:]))
-    if 0 <= row < len(entries):
-        text = entries[row].get("text", "")
-        if text and text != "No transcriptions yet":
-            try:
-                pyperclip.copy(text)
-                log.info("COPIED: %s", text[:50])
-            except Exception:
-                log.exception("Failed to copy text")
+    # Walk variable-height rows to find which entry was clicked (scroll-aware)
+    total = len(_transcription_log)
+    end = total - _log_scroll_offset
+    start = max(0, end - LOG_PANEL_MAX_VISIBLE)
+    entries = list(reversed(_transcription_log[start:end]))
+    y_acc = LOG_HEADER_H + LOG_PANEL_PADDING
+    for idx, entry_h in enumerate(_log_entry_heights):
+        if idx >= len(entries):
+            break
+        if y_acc <= ry < y_acc + entry_h:
+            text = entries[idx].get("text", "")
+            if text and text != "No transcriptions yet":
+                try:
+                    pyperclip.copy(text)
+                    log.info("COPIED: %s", text[:50])
+                    _copied_row = idx
+                    _copied_time = time.time()
+                except Exception:
+                    log.exception("Failed to copy text")
             _copy_debounce = True
+            return
+        y_acc += entry_h
 
 
 # ---------------------------------------------------------------------------
@@ -1030,6 +1741,8 @@ def _handle_copy_click() -> None:
 def start_recording() -> None:
     global is_recording, audio_chunks, mic_stream, _target_hwnd
     global _current_level, _display_level
+    global _stream_queue, _stream_worker, _silence_count, _transcribed_idx
+    global _stream_focus_done, _stream_texts
     if is_recording:
         return
 
@@ -1038,29 +1751,68 @@ def start_recording() -> None:
     _display_level = 0.0
     audio_chunks = []
 
+    # Compute silence threshold in callback count from SILENCE_DURATION.
+    # sounddevice default blocksize at 16 kHz ≈ 512 frames (~32ms per callback).
+    _cb_duration = 512 / SAMPLE_RATE  # seconds per callback
+    silence_needed = int(SILENCE_DURATION / _cb_duration)
+
+    streaming = STREAM_MODE
+    if streaming:
+        _stream_queue = queue.Queue()
+        _silence_count = 0
+        _transcribed_idx = 0
+        _stream_focus_done = False
+        _stream_texts = []
+        _stream_worker = threading.Thread(target=_transcription_worker, daemon=True)
+        _stream_worker.start()
+
     def on_audio(indata, frames, time_info, status):
-        global _current_level
-        if is_recording:
-            chunk = indata[:, 0].copy()
-            audio_chunks.append(chunk)
-            # Update audio level for dot visualization
-            rms = float(np.sqrt(np.mean(chunk ** 2)))
-            _current_level = _current_level * 0.6 + min(rms * 15, 1.0) * 0.4
+        global _current_level, _silence_count, _transcribed_idx
+        if not is_recording:
+            return
+
+        chunk = indata[:, 0].copy()
+        audio_chunks.append(chunk)
+
+        rms = float(np.sqrt(np.mean(chunk ** 2)))
+        _current_level = _current_level * 0.6 + min(rms * 15, 1.0) * 0.4
+
+        if not streaming:
+            return
+
+        # Silence detection for streaming dispatch
+        if rms < SILENCE_RMS_THRESHOLD:
+            _silence_count += 1
+        else:
+            _silence_count = 0
+
+        if _silence_count == silence_needed:
+            # Silence threshold just hit — dispatch accumulated speech audio
+            end_idx = len(audio_chunks) - silence_needed  # exclude trailing silence
+            start_idx = _transcribed_idx
+            if end_idx > start_idx:
+                segment = audio_chunks[start_idx:end_idx]
+                _transcribed_idx = end_idx
+                _stream_queue.put(("segment", segment))
+            _silence_count = 0  # reset so it doesn't re-trigger each tick
 
     try:
         mic_stream = sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=1, dtype="float32", callback=on_audio,
+            samplerate=SAMPLE_RATE, channels=1, dtype="float32",
+            blocksize=512, callback=on_audio,
         )
         mic_stream.start()
     except Exception:
         log.exception("Failed to open microphone")
         mic_stream = None
         set_state("idle")
+        if streaming and _stream_queue:
+            _stream_queue.put(("stop", None))
         return
 
     is_recording = True
     set_state("recording")
-    log.info("REC START")
+    log.info("REC START (stream=%s)", streaming)
 
 
 def stop_and_transcribe() -> None:
@@ -1078,6 +1830,14 @@ def stop_and_transcribe() -> None:
         log.exception("Error closing microphone")
         mic_stream = None
 
+    if STREAM_MODE and _stream_queue:
+        _stop_and_transcribe_streaming()
+    else:
+        _stop_and_transcribe_batch()
+
+
+def _stop_and_transcribe_batch() -> None:
+    """Original batch transcription path."""
     set_state("transcribing")
 
     try:
@@ -1095,14 +1855,16 @@ def stop_and_transcribe() -> None:
 
         t0 = time.perf_counter()
         segments, _ = model.transcribe(
-            audio, beam_size=1, language="en", vad_filter=False,
+            audio, beam_size=1, language="en",
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=500),
+            no_speech_threshold=0.6,
         )
         text = " ".join(seg.text.strip() for seg in segments).strip()
         elapsed = time.perf_counter() - t0
         log.info("TRANSCRIBE %.3fs -> %s", elapsed, text)
 
         if text:
-            # Add to transcription history
             _transcription_log.append({
                 "text": text,
                 "timestamp": time.strftime("%H:%M:%S"),
@@ -1111,7 +1873,6 @@ def stop_and_transcribe() -> None:
             if len(_transcription_log) > 20:
                 _transcription_log[:] = _transcription_log[-20:]
 
-            # Restore focus to the window that was active when recording started
             if _target_hwnd:
                 try:
                     focus_window(_target_hwnd)
@@ -1127,6 +1888,51 @@ def stop_and_transcribe() -> None:
     except Exception:
         log.exception("Transcription failed")
     finally:
+        set_state("idle")
+
+
+def _stop_and_transcribe_streaming() -> None:
+    """Flush remaining audio through worker, then tear down."""
+    global _stream_queue, _stream_worker
+
+    try:
+        remaining = audio_chunks[_transcribed_idx:]
+        if remaining:
+            audio = np.concatenate(remaining)
+            duration = len(audio) / SAMPLE_RATE
+            log.info("STREAM FLUSH — %.1fs remaining", duration)
+
+            if duration >= MIN_CHUNK_DURATION:
+                set_state("transcribing")
+                done_event = threading.Event()
+                _stream_queue.put(("flush", (remaining, done_event)))
+                done_event.wait(timeout=30.0)
+            else:
+                log.info("STREAM FLUSH: too short, skip")
+        else:
+            log.info("STREAM FLUSH: nothing remaining")
+
+        _stream_queue.put(("stop", None))
+        if _stream_worker:
+            _stream_worker.join(timeout=5.0)
+
+        # Log combined text as one entry
+        full_text = " ".join(_stream_texts).strip()
+        if full_text:
+            _transcription_log.append({
+                "text": full_text,
+                "timestamp": time.strftime("%H:%M:%S"),
+                "time_epoch": time.time(),
+            })
+            if len(_transcription_log) > 20:
+                _transcription_log[:] = _transcription_log[-20:]
+            log.info("STREAM TYPED: %s", full_text)
+
+    except Exception:
+        log.exception("Streaming flush failed")
+    finally:
+        _stream_queue = None
+        _stream_worker = None
         set_state("idle")
 
 
@@ -1169,6 +1975,9 @@ WM_TIMER = 0x0113
 
 def message_loop() -> None:
     global _overlay_hwnd, _log_panel_hwnd, _model_panel_hwnd, _settings_panel_hwnd
+    global _welcome_hwnd, _mouse_hook
+    global _copied_row, _copy_hover_row, _copied_time
+    global _download_error, _log_scroll_offset, _wheel_delta
     user32 = ctypes.windll.user32
 
     if not user32.RegisterHotKey(None, HOTKEY_ID, HOTKEY_MOD, VK_SPACE):
@@ -1184,10 +1993,19 @@ def message_loop() -> None:
     _log_panel_hwnd = _create_panel_window()
     _model_panel_hwnd = _create_panel_window()
     _settings_panel_hwnd = _create_panel_window()
+    _welcome_hwnd = _create_panel_window()
+
+    # Install low-level mouse hook for wheel scroll
+    _mouse_hook = user32.SetWindowsHookExW(14, _mouse_hook_callback, None, 0)  # WH_MOUSE_LL
+    if not _mouse_hook:
+        log.warning("Failed to install mouse hook — log panel scroll disabled")
 
     # Show pill immediately in idle mode
-    _update_layered_window(_overlay_hwnd, _idle_frame, IDLE_W, IDLE_H)
+    _update_layered_window(_overlay_hwnd, _build_idle_frame(), IDLE_W, IDLE_H)
     user32.ShowWindow(_overlay_hwnd, 8)  # SW_SHOWNA
+
+    # Show welcome tooltip
+    _show_welcome()
 
     timer_id = user32.SetTimer(None, 0, 33, None)  # ~30fps
     HWND_TOPMOST = -1
@@ -1206,13 +2024,18 @@ def message_loop() -> None:
             if _overlay_hwnd:
                 user32.KillTimer(None, timer_id)
                 user32.UnregisterHotKey(None, HOTKEY_ID)
+                if _mouse_hook:
+                    user32.UnhookWindowsHookEx(_mouse_hook)
+                    _mouse_hook = None
                 _hide_all_panels()
-                for hwnd in (_log_panel_hwnd, _model_panel_hwnd, _settings_panel_hwnd):
+                _hide_welcome()
+                for hwnd in (_log_panel_hwnd, _model_panel_hwnd, _settings_panel_hwnd, _welcome_hwnd):
                     if hwnd:
                         user32.DestroyWindow(hwnd)
                 _log_panel_hwnd = None
                 _model_panel_hwnd = None
                 _settings_panel_hwnd = None
+                _welcome_hwnd = None
                 user32.DestroyWindow(_overlay_hwnd)
                 _overlay_hwnd = None
                 user32.PostQuitMessage(0)
@@ -1231,10 +2054,12 @@ def message_loop() -> None:
 
                 if current_state == "idle":
                     _set_pill_mode("idle")
-                    _update_layered_window(_overlay_hwnd, _idle_frame, IDLE_W, IDLE_H)
+                    frame = _build_idle_frame(_hover_zone)
+                    _update_layered_window(_overlay_hwnd, frame, IDLE_W, IDLE_H)
                 else:
-                    # Switch to active pill, hide all panels
+                    # Switch to active pill, hide all panels + welcome
                     _hide_all_panels()
+                    _hide_welcome()
                     _set_pill_mode("active")
 
             # Animate active states
@@ -1245,24 +2070,84 @@ def message_loop() -> None:
 
             # Click-based panel interaction (only in idle state)
             if current_state == "idle":
+                # Hover detection (skip during drag to avoid flicker)
+                if not _drag_active:
+                    prev_hover = _hover_zone
+                    if _is_cursor_over_hwnd(_overlay_hwnd):
+                        pt = ctypes.wintypes.POINT()
+                        user32.GetCursorPos(ctypes.byref(pt))
+                        rect = ctypes.wintypes.RECT()
+                        user32.GetWindowRect(_overlay_hwnd, ctypes.byref(rect))
+                        _set_hover_zone(_get_idle_icon_zone(pt.x, rect.left))
+                    else:
+                        _set_hover_zone(None)
+                    if _hover_zone != prev_hover:
+                        frame = _build_idle_frame(_hover_zone)
+                        _update_layered_window(_overlay_hwnd, frame, IDLE_W, IDLE_H)
+
                 _handle_idle_pill_click()
 
                 # Handle clicks within active panels
                 if _active_panel == "info":
+                    prev_copied = _copied_row
                     _handle_copy_click()
+                    # Copy hover detection + re-render on state change
+                    prev_copy_hover = _copy_hover_row
+                    _update_copy_hover()
+                    needs_rerender = (
+                        _copy_hover_row != prev_copy_hover
+                        or _copied_row != prev_copied
+                    )
+                    # Clear copied checkmark after 1.5s
+                    if _copied_row is not None and (time.time() - _copied_time) >= 1.5:
+                        _copied_row = None
+                        needs_rerender = True
+                    if needs_rerender:
+                        _show_log_panel()
+
                 elif _active_panel == "model":
                     _handle_model_click()
                 elif _active_panel == "settings":
                     _handle_settings_click()
 
-                # Re-render model panel once after loading finishes
+                # Mouse wheel scroll for log panel
+                if _wheel_delta != 0:
+                    # Capture and clear atomically to avoid lost updates
+                    delta_snapshot = _wheel_delta
+                    _wheel_delta = 0
+                    if _active_panel == "info" and _log_panel_hwnd:
+                        if _is_cursor_over_hwnd(_log_panel_hwnd):
+                            total = len(_transcription_log)
+                            max_offset = max(0, total - LOG_PANEL_MAX_VISIBLE)
+                            scroll_lines = delta_snapshot // 120
+                            if scroll_lines:
+                                _log_scroll_offset = max(0, min(
+                                    _log_scroll_offset + scroll_lines, max_offset))
+                                _show_log_panel()
+
+                # Animate model panel during download / refresh after load
                 if _model_loading:
                     _was_model_loading = True
+                    # Re-render during download to animate progress bar
+                    if _active_panel == "model" and _model_panel_hwnd:
+                        buf, pw, ph = _render_model_panel()
+                        _show_panel_window(_model_panel_hwnd, buf, pw, ph)
                 elif _was_model_loading:
                     _was_model_loading = False
                     if _active_panel == "model" and _model_panel_hwnd:
                         buf, pw, ph = _render_model_panel()
                         _show_panel_window(_model_panel_hwnd, buf, pw, ph)
+
+                # Auto-clear download error after 5 seconds
+                if _download_error and (time.time() - _download_error_time) >= 5.0:
+                    _download_error = None
+                    if _active_panel == "model" and _model_panel_hwnd:
+                        buf, pw, ph = _render_model_panel()
+                        _show_panel_window(_model_panel_hwnd, buf, pw, ph)
+
+            # Auto-dismiss welcome tooltip after 5 seconds
+            if _welcome_shown and time.time() - _welcome_show_time >= 5.0:
+                _hide_welcome()
 
             # Topmost re-assertion every ~2 seconds (60 ticks at 33ms)
             topmost_tick += 1

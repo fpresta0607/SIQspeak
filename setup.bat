@@ -58,7 +58,27 @@ echo   [OK] Dependencies installed.
 echo.
 
 :: ------------------------------------------------------------------
-:: 4. Offer desktop shortcut
+:: 4. Pre-download default model
+:: ------------------------------------------------------------------
+echo   The default speech model (tiny, ~75 MB) will be downloaded
+echo   on first use if not already available.
+echo.
+set /p PREDOWNLOAD="   Download it now? (Y/N): "
+if /i "%PREDOWNLOAD%"=="Y" (
+    echo   [..] Downloading tiny model (~75 MB)...
+    .venv\Scripts\python.exe -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8')"
+    if %errorlevel% equ 0 (
+        echo   [OK] Model downloaded and ready.
+    ) else (
+        echo   [!] Download failed. The model will download on first use.
+    )
+) else (
+    echo   [--] Skipped. Model will download on first use.
+)
+echo.
+
+:: ------------------------------------------------------------------
+:: 5. Offer desktop shortcut
 :: ------------------------------------------------------------------
 set /p SHORTCUT="   Create a desktop shortcut? (Y/N): "
 if /i "%SHORTCUT%"=="Y" (
@@ -83,7 +103,7 @@ if /i "%SHORTCUT%"=="Y" (
 echo.
 
 :: ------------------------------------------------------------------
-:: 5. Offer to run now
+:: 6. Offer to run now
 :: ------------------------------------------------------------------
 set /p RUNNOW="   Run SIQspeak now? (Y/N): "
 if /i "%RUNNOW%"=="Y" (

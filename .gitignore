@@ -6,6 +6,8 @@ __pycache__/
 
 # Runtime
 dictate.log
+.env
+*.env
 
 # Claude Code
 .claude/
