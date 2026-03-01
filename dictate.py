@@ -424,10 +424,13 @@ _HOOKPROC = ctypes.WINFUNCTYPE(
 
 def _mouse_hook_proc(nCode, wParam, lParam):
     global _wheel_delta
-    if nCode >= 0 and wParam == 0x020A:  # WM_MOUSEWHEEL
-        data = ctypes.cast(lParam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
-        delta = ctypes.c_short((data.mouseData >> 16) & 0xFFFF).value
-        _wheel_delta += delta
+    try:
+        if nCode >= 0 and wParam == 0x020A:  # WM_MOUSEWHEEL
+            data = ctypes.cast(lParam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
+            delta = ctypes.c_short((data.mouseData >> 16) & 0xFFFF).value
+            _wheel_delta += delta
+    except Exception:
+        pass
     return ctypes.windll.user32.CallNextHookEx(_mouse_hook, nCode, wParam, lParam)
 
 # Must prevent GC of the callback
@@ -2182,7 +2185,14 @@ def main() -> None:
     log.info("READY")
 
     # Main thread: unified message loop (hotkey + overlay animation)
-    message_loop()
+    try:
+        message_loop()
+    finally:
+        # Always unhook mouse hook on exit to prevent cursor lock
+        global _mouse_hook
+        if _mouse_hook:
+            ctypes.windll.user32.UnhookWindowsHookEx(_mouse_hook)
+            _mouse_hook = None
 
 
 if __name__ == "__main__":
