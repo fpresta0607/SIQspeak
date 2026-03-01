@@ -9,9 +9,11 @@ import base64
 import ctypes
 import ctypes.wintypes
 import io
+import json
 import logging
 import math
 import os
+import re
 import queue
 import sys
 import threading
@@ -59,6 +61,8 @@ STREAM_MODE = False                 # opt-in; toggled via settings panel
 SILENCE_RMS_THRESHOLD = 0.015       # raw RMS below this = silence
 SILENCE_DURATION = 0.7              # seconds of silence before dispatching chunk
 MIN_CHUNK_DURATION = 0.5            # minimum audio length (seconds) to transcribe
+OVERLAP_FRAMES = 5                  # ~160ms of audio callbacks prepended for boundary context
+OVERLAP_TAIL_WORDS = 4              # words kept from previous chunk for dedup comparison
 
 # Known Whisper hallucination phrases (matched after lowercasing + stripping punctuation)
 _HALLUCINATION_PATTERNS = {
@@ -67,6 +71,55 @@ _HALLUCINATION_PATTERNS = {
     "please subscribe", "you", "bye", "goodbye",
     "thanks for watching and see you next time",
 }
+
+# Device selection (auto-detected at startup, togglable in settings)
+_device: str = "cpu"
+_compute_type: str = "int8"
+_has_cuda: bool = False
+
+# Microphone selection (None = system default)
+_mic_device: int | None = None
+_mic_devices: list[dict] = []
+
+# Config persistence
+CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.json")
+
+
+def _load_config() -> dict:
+    """Load config.json, return empty dict if missing/corrupt."""
+    try:
+        with open(CONFIG_PATH) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_config() -> None:
+    """Persist current settings to config.json."""
+    cfg = {
+        "model": _loaded_model_name,
+        "stream_mode": STREAM_MODE,
+        "pill_x": _pill_user_x,
+        "pill_y": _pill_user_y,
+        "device": _device,
+        "mic_device": _mic_device,
+    }
+    try:
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(cfg, f, indent=2)
+    except OSError:
+        log.exception("Failed to save config")
+
+
+def _get_input_devices() -> list[dict]:
+    """Return list of input-capable audio devices."""
+    devices = sd.query_devices()
+    result = []
+    for i, d in enumerate(devices):
+        if d["max_input_channels"] > 0:
+            result.append({"index": i, "name": d["name"]})
+    return result
+
 
 # Win32 hotkey: Ctrl+Shift+Space
 HOTKEY_ID = 1
@@ -146,6 +199,7 @@ _silence_count = 0                  # consecutive silent audio callbacks
 _transcribed_idx = 0                # audio_chunks index: everything before this is dispatched
 _stream_focus_done = False          # focus target window only once per session
 _stream_texts: list[str] = []       # collect typed texts for transcription log entry
+_prev_chunk_tail = list[str]()      # last N words from previous chunk for boundary dedup
 _pill_current_mode = "idle"  # tracks which pill size is displayed
 
 # Drag-to-reposition state
@@ -362,10 +416,69 @@ DOT_START_X = (ACTIVE_W - (NUM_DOTS - 1) * DOT_SPACING) / 2
 DOT_Y = ACTIVE_H / 2.0
 
 # Log panel
-LOG_PANEL_MAX_VISIBLE = 20
+LOG_PANEL_MAX_VISIBLE = 50
 LOG_PANEL_PADDING = 16
 LOG_PANEL_BG_ALPHA = 0.94
 _log_scroll_offset = 0  # scroll offset (number of entries scrolled)
+
+# Log persistence
+LOG_FILE_PATH = os.path.join(SCRIPT_DIR, "transcriptions.jsonl")
+LOG_IN_MEMORY_CAP = 50
+LOG_FILE_MAX_ENTRIES = 500
+_log_append_count = 0
+
+
+def _load_log() -> None:
+    """Load last LOG_IN_MEMORY_CAP entries from JSONL file on startup."""
+    global _transcription_log
+    if not os.path.exists(LOG_FILE_PATH):
+        return
+    try:
+        entries = []
+        with open(LOG_FILE_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        _transcription_log = entries[-LOG_IN_MEMORY_CAP:]
+        log.info("Loaded %d log entries from disk", len(_transcription_log))
+    except OSError:
+        log.warning("Could not read %s", LOG_FILE_PATH)
+
+
+def _save_log_entry(entry: dict) -> None:
+    """Append one entry to JSONL file; trigger rotation periodically."""
+    global _log_append_count
+    try:
+        with open(LOG_FILE_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        _log_append_count += 1
+        if _log_append_count >= 50:
+            _rotate_log_file()
+            _log_append_count = 0
+    except OSError:
+        log.warning("Could not write to %s", LOG_FILE_PATH)
+
+
+def _rotate_log_file() -> None:
+    """Keep only the last LOG_FILE_MAX_ENTRIES lines in the JSONL file."""
+    if not os.path.exists(LOG_FILE_PATH):
+        return
+    try:
+        with open(LOG_FILE_PATH, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        if len(lines) <= LOG_FILE_MAX_ENTRIES:
+            return
+        with open(LOG_FILE_PATH, "w", encoding="utf-8") as f:
+            f.writelines(lines[-LOG_FILE_MAX_ENTRIES:])
+        log.info("Rotated log file to %d entries", LOG_FILE_MAX_ENTRIES)
+    except OSError:
+        log.warning("Could not rotate %s", LOG_FILE_PATH)
+
 
 # Model selector panel
 MODEL_PANEL_ROW_H = 62
@@ -1094,13 +1207,29 @@ def _hide_model_panel() -> None:
 # ---------------------------------------------------------------------------
 # Settings panel
 # ---------------------------------------------------------------------------
+def _draw_toggle_pill(draw: ImageDraw.Draw, x: int, y: int, w: int, h: int,
+                      is_on: bool, font_toggle) -> None:
+    """Draw an ON/OFF toggle pill at the given position."""
+    if is_on:
+        draw.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=(*CYAN, 180))
+        knob_x = x + w - h + 4
+        draw.ellipse([knob_x, y + 4, knob_x + h - 8, y + h - 4],
+                     fill=(255, 255, 255, 240))
+        draw.text((x + 8, y + 6), "ON", font=font_toggle, fill=(15, 20, 35, 220))
+    else:
+        draw.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=(*GRAY, 80))
+        knob_x = x + 4
+        draw.ellipse([knob_x, y + 4, knob_x + h - 8, y + h - 4], fill=(*GRAY, 200))
+        draw.text((x + w - 30, y + 6), "OFF", font=font_toggle, fill=(*GRAY, 200))
+
+
 def _render_settings_panel() -> tuple[np.ndarray, int, int]:
-    """Render settings panel with stream toggle and Quit button."""
+    """Render settings panel with stream toggle, GPU toggle, mic selector, and Quit."""
     panel_w = _settings_panel_width()
-    # Dynamic height: header + stream row + gap + quit btn + bottom pad
-    stream_row_h = 44
+    row_h = 44
     quit_btn_h = 44
-    panel_h = SETTINGS_HEADER_H + stream_row_h + 12 + quit_btn_h + 20
+    n_rows = 2 + (1 if _has_cuda else 0)  # stream + mic + (gpu)
+    panel_h = SETTINGS_HEADER_H + row_h * n_rows + 12 + quit_btn_h + 20
 
     img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -1114,61 +1243,72 @@ def _render_settings_panel() -> tuple[np.ndarray, int, int]:
         font = ImageFont.truetype("seguisb.ttf", 17)
         font_toggle = ImageFont.truetype("seguisb.ttf", 14)
         font_btn = ImageFont.truetype("seguisb.ttf", 18)
+        font_mic = ImageFont.truetype("seguisb.ttf", 14)
     except OSError:
         font_title = ImageFont.load_default()
         font = font_title
         font_toggle = font
         font_btn = font
+        font_mic = font
 
     # Header
     draw.text((20, 12), "Settings", fill=(*WHITE, 230), font=font_title)
     draw.line([(20, SETTINGS_HEADER_H - 4), (panel_w - 20, SETTINGS_HEADER_H - 4)],
               fill=(*GRAY, 50))
 
-    # Stream toggle row
-    row_y = SETTINGS_HEADER_H + 8
-    label = "Stream mode"
-    draw.text((20, row_y + 10), label, font=font, fill=(230, 240, 255, 220))
-
-    # Toggle pill
+    cur_y = SETTINGS_HEADER_H + 8
     pill_w, pill_h = 56, 28
-    pill_x = panel_w - pill_w - 20
-    pill_y = row_y + 8
-    if STREAM_MODE:
-        draw.rounded_rectangle(
-            [pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
-            radius=pill_h // 2, fill=(*CYAN, 180))
-        knob_x = pill_x + pill_w - pill_h + 4
-        draw.ellipse([knob_x, pill_y + 4, knob_x + pill_h - 8, pill_y + pill_h - 4],
-                     fill=(255, 255, 255, 240))
-        draw.text((pill_x + 8, pill_y + 6), "ON", font=font_toggle, fill=(15, 20, 35, 220))
+
+    # --- Stream toggle row ---
+    draw.text((20, cur_y + 10), "Stream mode", font=font, fill=(230, 240, 255, 220))
+    _draw_toggle_pill(draw, panel_w - pill_w - 20, cur_y + 8, pill_w, pill_h,
+                      STREAM_MODE, font_toggle)
+    cur_y += row_h
+
+    # --- GPU toggle row (only if CUDA detected) ---
+    if _has_cuda:
+        draw.text((20, cur_y + 10), "Use GPU", font=font, fill=(230, 240, 255, 220))
+        _draw_toggle_pill(draw, panel_w - pill_w - 20, cur_y + 8, pill_w, pill_h,
+                          _device == "cuda", font_toggle)
+        cur_y += row_h
+
+    # --- Mic selector row ---
+    draw.text((20, cur_y + 10), "Microphone", font=font, fill=(230, 240, 255, 220))
+    if _mic_devices:
+        if _mic_device is not None:
+            mic_name = next((d["name"] for d in _mic_devices if d["index"] == _mic_device), "Default")
+        else:
+            mic_name = _mic_devices[0]["name"] + " *"
+        max_chars = 18
+        display_name = mic_name[:max_chars] + "..." if len(mic_name) > max_chars else mic_name
     else:
-        draw.rounded_rectangle(
-            [pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
-            radius=pill_h // 2, fill=(*GRAY, 80))
-        knob_x = pill_x + 4
-        draw.ellipse([knob_x, pill_y + 4, knob_x + pill_h - 8, pill_y + pill_h - 4],
-                     fill=(*GRAY, 200))
-        draw.text((pill_x + pill_w - 30, pill_y + 6), "OFF", font=font_toggle, fill=(*GRAY, 200))
+        display_name = "No devices"
+    name_text = f"{display_name}  >"
+    bbox = draw.textbbox((0, 0), name_text, font=font_mic)
+    text_w = bbox[2] - bbox[0]
+    draw.text((panel_w - text_w - 20, cur_y + 13), name_text, font=font_mic,
+              fill=(*CYAN, 200))
+    cur_y += row_h
 
     # Quit button — red rounded rect
+    btn_y = cur_y + 12
     btn_x = 20
-    btn_y = row_y + stream_row_h + 12
     btn_w = panel_w - 40
-    btn_h = quit_btn_h
     draw.rounded_rectangle(
-        [btn_x, btn_y, btn_x + btn_w, btn_y + btn_h],
+        [btn_x, btn_y, btn_x + btn_w, btn_y + quit_btn_h],
         radius=8, fill=(180, 40, 40, 220),
     )
-    _draw_centered_text(draw, "Quit", panel_w // 2, btn_y + btn_h // 2, font_btn, (255, 255, 255, 240))
+    _draw_centered_text(draw, "Quit", panel_w // 2, btn_y + quit_btn_h // 2,
+                        font_btn, (255, 255, 255, 240))
 
     return _rgba_to_premul_bgra(img), panel_w, panel_h
 
 
 def _show_settings_panel() -> None:
-    global _active_panel
+    global _active_panel, _mic_devices
     if not _settings_panel_hwnd or not _overlay_hwnd:
         return
+    _mic_devices = _get_input_devices()
     buf, pw, ph = _render_settings_panel()
     _show_panel_window(_settings_panel_hwnd, buf, pw, ph)
     _active_panel = "settings"
@@ -1307,6 +1447,7 @@ def _handle_idle_pill_click() -> None:
             px, py, _, _ = _pill_screen_rect()
             _pill_user_x = px
             _pill_user_y = py
+            _save_config()
             _drag_active = False
             _drag_pending = False
             _idle_click_debounce = True
@@ -1427,8 +1568,9 @@ def _handle_model_click() -> None:
 
 
 def _handle_settings_click() -> None:
-    """Detect click on stream toggle or Quit button in the settings panel."""
+    """Detect click on stream toggle, GPU toggle, mic selector, or Quit."""
     global _should_quit, _settings_click_debounce, STREAM_MODE
+    global _device, _compute_type, _mic_device
     user32 = ctypes.windll.user32
 
     if not (user32.GetAsyncKeyState(0x01) & 0x8000):
@@ -1450,17 +1592,54 @@ def _handle_settings_click() -> None:
     user32.GetWindowRect(_settings_panel_hwnd, ctypes.byref(rect))
     ry = pt.y - rect.top
 
-    # Header: 0..SETTINGS_HEADER_H, Stream toggle: header+8..+52, Quit: header+64+
+    # Row layout: header, then 44px rows (stream, gpu if available, mic), then quit
+    row_h = 44
+    row_start = SETTINGS_HEADER_H + 8  # first row top
+    row_idx = (ry - row_start) // row_h if ry >= row_start else -1
+
     if ry < SETTINGS_HEADER_H:
         return  # clicked header area
-    elif ry < SETTINGS_HEADER_H + 56:
-        # Toggle stream mode
+
+    # Map row index to action based on whether GPU row is present
+    # Row 0 = stream, Row 1 = gpu (if _has_cuda) else mic, Row 2 = mic (if _has_cuda)
+    stream_row = 0
+    gpu_row = 1 if _has_cuda else -1
+    mic_row = 2 if _has_cuda else 1
+    quit_top = row_start + row_h * (3 if _has_cuda else 2) + 12
+
+    if row_idx == stream_row and ry < row_start + row_h:
         STREAM_MODE = not STREAM_MODE
         log.info("STREAM_MODE toggled to %s", STREAM_MODE)
+        _save_config()
         buf, pw, ph = _render_settings_panel()
         _show_panel_window(_settings_panel_hwnd, buf, pw, ph)
-    else:
-        # Quit button
+    elif _has_cuda and row_idx == gpu_row and ry < row_start + row_h * 2:
+        if _device == "cuda":
+            _device, _compute_type = "cpu", "int8"
+        else:
+            _device, _compute_type = "cuda", "float16"
+        log.info("GPU toggled: device=%s, compute_type=%s", _device, _compute_type)
+        _save_config()
+        buf, pw, ph = _render_settings_panel()
+        _show_panel_window(_settings_panel_hwnd, buf, pw, ph)
+        _start_model_load(_loaded_model_name)
+    elif row_idx == mic_row and ry < row_start + row_h * (mic_row + 1):
+        if _mic_devices:
+            if _mic_device is None:
+                _mic_device = _mic_devices[0]["index"]
+            else:
+                cur_indices = [d["index"] for d in _mic_devices]
+                try:
+                    pos = cur_indices.index(_mic_device)
+                    _mic_device = cur_indices[(pos + 1) % len(cur_indices)]
+                except ValueError:
+                    _mic_device = cur_indices[0]
+            log.info("Mic changed to device %d: %s", _mic_device,
+                     next((d["name"] for d in _mic_devices if d["index"] == _mic_device), "?"))
+            _save_config()
+            buf, pw, ph = _render_settings_panel()
+            _show_panel_window(_settings_panel_hwnd, buf, pw, ph)
+    elif ry >= quit_top:
         _should_quit = True
         if icon:
             icon.stop()
@@ -1486,10 +1665,11 @@ def _start_model_load(name: str) -> None:
     def _load():
         global model, _model_loading, _loaded_model_name
         try:
-            new_model = WhisperModel(name, device="cpu", compute_type="int8")
+            new_model = WhisperModel(name, device=_device, compute_type=_compute_type)
             model = new_model
             _loaded_model_name = name
-            log.info("Model loaded: %s", name)
+            _save_config()
+            log.info("Model loaded: %s on %s", name, _device)
         except Exception:
             log.exception("Failed to load model %s", name)
         finally:
@@ -1542,10 +1722,11 @@ def _start_model_download_and_load(name: str) -> None:
             _download_progress = 1.0
             log.info("Download complete: %s, loading...", name)
 
-            new_model = WhisperModel(model_path, device="cpu", compute_type="int8")
+            new_model = WhisperModel(model_path, device=_device, compute_type=_compute_type)
             model = new_model
             _loaded_model_name = name
-            log.info("Model loaded: %s", name)
+            _save_config()
+            log.info("Model loaded: %s on %s", name, _device)
         except Exception:
             _download_error = "Download failed"
             _download_error_time = time.time()
@@ -1559,9 +1740,27 @@ def _start_model_download_and_load(name: str) -> None:
 # ---------------------------------------------------------------------------
 # Streaming transcription worker
 # ---------------------------------------------------------------------------
+def _strip_overlap(text: str, tail_words: list) -> str:
+    """Remove leading words that duplicate the previous chunk's tail."""
+    def norm(w: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", w.lower())
+
+    new_words = text.split()
+    tail_norm = [norm(w) for w in tail_words]
+    new_norm = [norm(w) for w in new_words]
+
+    for match_len in range(min(len(tail_norm), len(new_norm)), 0, -1):
+        if tail_norm[-match_len:] == new_norm[:match_len]:
+            log.info("STREAM DEDUP: stripped %d word(s): %s",
+                     match_len, " ".join(new_words[:match_len]))
+            return " ".join(new_words[match_len:]).strip()
+
+    return text
+
+
 def _transcription_worker() -> None:
     """Background thread: pull audio segments from queue, transcribe, type."""
-    global _stream_focus_done
+    global _stream_focus_done, _prev_chunk_tail
 
     while True:
         item = _stream_queue.get()
@@ -1571,10 +1770,11 @@ def _transcription_worker() -> None:
             break
 
         if kind == "segment":
-            segment_chunks = payload
+            segment_chunks, has_overlap = payload
             done_event = None
         elif kind == "flush":
             segment_chunks, done_event = payload
+            has_overlap = False
         else:
             continue
 
@@ -1613,7 +1813,11 @@ def _transcription_worker() -> None:
             elapsed = time.perf_counter() - t0
             log.info("STREAM TRANSCRIBE %.3fs -> %s", elapsed, text)
 
+            if text and has_overlap and _prev_chunk_tail:
+                text = _strip_overlap(text, _prev_chunk_tail)
+
             if text:
+                _prev_chunk_tail = text.split()[-OVERLAP_TAIL_WORDS:]
                 _stream_texts.append(text)
 
                 if not _stream_focus_done and _target_hwnd:
@@ -1745,7 +1949,7 @@ def start_recording() -> None:
     global is_recording, audio_chunks, mic_stream, _target_hwnd
     global _current_level, _display_level
     global _stream_queue, _stream_worker, _silence_count, _transcribed_idx
-    global _stream_focus_done, _stream_texts
+    global _stream_focus_done, _stream_texts, _prev_chunk_tail
     if is_recording:
         return
 
@@ -1766,6 +1970,7 @@ def start_recording() -> None:
         _transcribed_idx = 0
         _stream_focus_done = False
         _stream_texts = []
+        _prev_chunk_tail = []
         _stream_worker = threading.Thread(target=_transcription_worker, daemon=True)
         _stream_worker.start()
 
@@ -1792,21 +1997,26 @@ def start_recording() -> None:
         if _silence_count == silence_needed:
             # Silence threshold just hit — dispatch accumulated speech audio
             end_idx = len(audio_chunks) - silence_needed  # exclude trailing silence
-            start_idx = _transcribed_idx
-            if end_idx > start_idx:
-                segment = audio_chunks[start_idx:end_idx]
+            if end_idx > _transcribed_idx:
+                # Prepend overlap from previous chunk for word-boundary context
+                overlap_start = max(_transcribed_idx - OVERLAP_FRAMES, 0)
+                has_overlap = overlap_start < _transcribed_idx
+                segment = audio_chunks[overlap_start:end_idx]
                 _transcribed_idx = end_idx
-                _stream_queue.put(("segment", segment))
+                _stream_queue.put(("segment", (segment, has_overlap)))
             _silence_count = 0  # reset so it doesn't re-trigger each tick
 
+    mic_kwargs: dict = dict(
+        samplerate=SAMPLE_RATE, channels=1, dtype="float32",
+        blocksize=512, callback=on_audio,
+    )
+    if _mic_device is not None:
+        mic_kwargs["device"] = _mic_device
     try:
-        mic_stream = sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=1, dtype="float32",
-            blocksize=512, callback=on_audio,
-        )
+        mic_stream = sd.InputStream(**mic_kwargs)
         mic_stream.start()
     except Exception:
-        log.exception("Failed to open microphone")
+        log.exception("Failed to open microphone (device=%s)", _mic_device)
         mic_stream = None
         set_state("idle")
         if streaming and _stream_queue:
@@ -1868,13 +2078,15 @@ def _stop_and_transcribe_batch() -> None:
         log.info("TRANSCRIBE %.3fs -> %s", elapsed, text)
 
         if text:
-            _transcription_log.append({
+            entry = {
                 "text": text,
                 "timestamp": time.strftime("%H:%M:%S"),
                 "time_epoch": time.time(),
-            })
-            if len(_transcription_log) > 20:
-                _transcription_log[:] = _transcription_log[-20:]
+            }
+            _transcription_log.append(entry)
+            if len(_transcription_log) > LOG_IN_MEMORY_CAP:
+                _transcription_log[:] = _transcription_log[-LOG_IN_MEMORY_CAP:]
+            _save_log_entry(entry)
 
             if _target_hwnd:
                 try:
@@ -1922,13 +2134,15 @@ def _stop_and_transcribe_streaming() -> None:
         # Log combined text as one entry
         full_text = " ".join(_stream_texts).strip()
         if full_text:
-            _transcription_log.append({
+            entry = {
                 "text": full_text,
                 "timestamp": time.strftime("%H:%M:%S"),
                 "time_epoch": time.time(),
-            })
-            if len(_transcription_log) > 20:
-                _transcription_log[:] = _transcription_log[-20:]
+            }
+            _transcription_log.append(entry)
+            if len(_transcription_log) > LOG_IN_MEMORY_CAP:
+                _transcription_log[:] = _transcription_log[-LOG_IN_MEMORY_CAP:]
+            _save_log_entry(entry)
             log.info("STREAM TYPED: %s", full_text)
 
     except Exception:
@@ -2167,15 +2381,57 @@ def message_loop() -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 def main() -> None:
-    global icon, model
+    global icon, model, MODEL_NAME, STREAM_MODE
+    global _device, _compute_type, _has_cuda
+    global _pill_user_x, _pill_user_y, _mic_device, _mic_devices
+    global _loaded_model_name
+
+    # Load persisted config
+    cfg = _load_config()
+    MODEL_NAME = cfg.get("model", MODEL_NAME)
+    STREAM_MODE = cfg.get("stream_mode", STREAM_MODE)
+    _pill_user_x = cfg.get("pill_x")
+    _pill_user_y = cfg.get("pill_y")
+    _mic_device = cfg.get("mic_device")
+
+    # Load persisted transcription log
+    _load_log()
+
+    # GPU auto-detection
+    import ctranslate2
+    _has_cuda = ctranslate2.get_cuda_device_count() > 0
+    saved_device = cfg.get("device")
+    if saved_device == "cuda" and _has_cuda:
+        _device, _compute_type = "cuda", "float16"
+    elif saved_device == "cpu":
+        _device, _compute_type = "cpu", "int8"
+    elif _has_cuda:
+        _device, _compute_type = "cuda", "float16"
+    else:
+        _device, _compute_type = "cpu", "int8"
+    log.info("Device: %s (%s), CUDA available: %s", _device, _compute_type, _has_cuda)
+
+    # Cache available microphones
+    _mic_devices = _get_input_devices()
+    if _mic_device is not None:
+        valid_indices = {d["index"] for d in _mic_devices}
+        if _mic_device not in valid_indices:
+            log.warning("Saved mic device %d not found, using default", _mic_device)
+            _mic_device = None
 
     log.info("Loading model...")
     t0 = time.perf_counter()
+    _loaded_model_name = MODEL_NAME
     try:
-        model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
+        model = WhisperModel(MODEL_NAME, device=_device, compute_type=_compute_type)
     except Exception:
-        log.exception("Failed to load Whisper model")
-        sys.exit(1)
+        if _device == "cuda":
+            log.warning("GPU load failed, falling back to CPU")
+            _device, _compute_type = "cpu", "int8"
+            model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
+        else:
+            log.exception("Failed to load Whisper model")
+            sys.exit(1)
     log.info("Model ready in %.2fs", time.perf_counter() - t0)
 
     menu = Menu(MenuItem("Quit", quit_app))

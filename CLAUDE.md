@@ -20,7 +20,7 @@ There is no build step, test suite, or linter configured. The app is a single `d
 
 ## Architecture
 
-Single-file (`dictate.py`, ~2100 lines). No modules, no packages.
+Single-file (`dictate.py`, ~2370 lines). No modules, no packages.
 
 **Flow:** `main()` loads model → starts pystray in background thread → runs unified Win32 message loop on main thread (handles hotkey, overlay animation, and hover/click events).
 
@@ -39,9 +39,9 @@ Rendered via `UpdateLayeredWindow` with pre-multiplied alpha BGRA buffers from n
 **Panels (click-activated, one at a time):**
 All three panels share consistent styling: 14px corner radius, 0.94 alpha background, header with title (22px seguisb) + separator line, 20px side padding. Panel dimensions are screen-adaptive via `_screen_size()` / `GetSystemMetrics` — computed dynamically per render, not hardcoded. Panels are clamped to screen boundaries with 8px margin.
 
-- **Log panel:** Shows recent transcriptions (up to 20 visible) with timestamps and copy buttons. Supports mouse wheel scrolling via `WH_MOUSE_LL` low-level hook with scroll indicators (▲/▼). Uses `pyperclip` for clipboard. Width/height scale with screen resolution.
+- **Log panel:** Shows recent transcriptions (up to 50 visible) with timestamps and copy buttons. Persisted to `transcriptions.jsonl` (JSONL format, auto-rotated at 500 entries). Loaded on startup. Supports mouse wheel scrolling via `WH_MOUSE_LL` low-level hook with scroll indicators (▲/▼). Uses `pyperclip` for clipboard. Width/height scale with screen resolution.
 - **Model selector:** "Models" header + rows. Cached models show "ready" and load on single click. Uncached models show download size and require two-click confirmation with progress bar. Internet connectivity is checked before download. Errors auto-clear after 5s.
-- **Settings panel:** "Settings" header, stream mode toggle pill (rounded ON/OFF visual with knob), and Quit button.
+- **Settings panel:** "Settings" header, stream mode toggle, GPU toggle (shown only when CUDA available), mic selector (click-to-cycle), and Quit button. All toggles use ON/OFF pill style with knob.
 
 Clicking an icon toggles its panel; clicking outside pill+panel dismisses it. All panels auto-hide when recording starts.
 
@@ -50,7 +50,7 @@ Clicking an icon toggles its panel; clicking outside pill+panel dismisses it. Al
 **Color palette:** Dark blue (20,40,80), cyan (0,200,220), gray (140,140,150), white (230,240,255). Recording = cyan dots. Transcribing = white dots.
 
 **Streaming transcription (opt-in via settings panel):**
-When `STREAM_MODE` is enabled, the `on_audio` callback monitors raw RMS for silence. After ~0.7s of silence, accumulated audio is dispatched to a background `_transcription_worker` thread via `queue.Queue`. The worker calls `model.transcribe()` with Silero VAD enabled (`vad_filter=True`) to strip non-speech audio, `condition_on_previous_text=False` to prevent cross-chunk duplication, and a post-transcription hallucination filter (no_speech_prob + known pattern matching). Focuses the target window once and types the result immediately. Recording continues. On key release, remaining audio is flushed.
+When `STREAM_MODE` is enabled, the `on_audio` callback monitors raw RMS for silence. After ~0.7s of silence, accumulated audio is dispatched to a background `_transcription_worker` thread via `queue.Queue`. Each chunk includes ~160ms of overlap audio from the previous chunk (`OVERLAP_FRAMES=5` callbacks) to prevent word splitting at boundaries. The worker calls `model.transcribe()` with Silero VAD enabled (`vad_filter=True`), `condition_on_previous_text=False`, and a hallucination filter. After transcription, `_strip_overlap()` compares the first words against the previous chunk's tail (`_prev_chunk_tail`, last 4 words) and strips duplicates via normalized word matching. Focuses the target window once and types the result immediately. Recording continues. On key release, remaining audio is flushed without overlap dedup.
 
 **Threading model:**
 - Main thread: Win32 message loop (`GetMessageW`) handles `WM_HOTKEY` + `WM_TIMER` + click detection + mouse wheel scroll (via `WH_MOUSE_LL` hook delta accumulation)
@@ -64,18 +64,29 @@ When `STREAM_MODE` is enabled, the `on_audio` callback monitors raw RMS for sile
 
 ## Configuration
 
-All config is hardcoded at the top of `dictate.py`:
+Settings persist to `config.json` (gitignored) in the script directory. On first launch with no config, the app auto-detects GPU via `ctranslate2.get_cuda_device_count()` and uses CUDA+float16 if available, otherwise CPU+int8. Subsequent launches restore saved settings.
 
+**Persisted in `config.json`:** model name, stream mode, pill position (x/y), device (cuda/cpu), mic device index.
+
+**Hardcoded defaults at top of `dictate.py`:**
 - `MODEL_NAME` — `"tiny"` default (changeable at runtime via model selector panel)
 - `AVAILABLE_MODELS` — tiny, base, small, medium, large-v2, large-v3
 - `MODEL_SIZES_MB` — approximate download sizes per model (75 MB to ~3 GB)
 - `SAMPLE_RATE` — 16000 Hz
 - `HOTKEY` — Ctrl+Shift+Space (via `RegisterHotKey`)
-- Inference: CPU-only, int8 quantization, beam_size=1, English-only, Silero VAD enabled
+- Inference: beam_size=1, English-only, Silero VAD enabled; device/compute_type from config or auto-detected
 - `STREAM_MODE` — `False` default (toggleable at runtime via settings panel)
 - `SILENCE_RMS_THRESHOLD` — `0.012` (increase for noisy rooms, decrease for quiet rooms)
 - `SILENCE_DURATION` — `0.7` seconds of silence before dispatching a chunk
 - `MIN_CHUNK_DURATION` — `0.5` seconds minimum audio to attempt transcription
+- `OVERLAP_FRAMES` — `5` callbacks (~160ms) of audio overlap prepended to each streaming chunk for boundary context
+- `OVERLAP_TAIL_WORDS` — `4` words kept from previous chunk for boundary dedup comparison
+
+**Log persistence:** Transcriptions saved to `transcriptions.jsonl` (JSONL, one entry per line). Last 50 loaded on startup. File auto-rotated at 500 entries. In-memory cap: 50 entries. Corrupted/missing file handled gracefully.
+
+**GPU support:** Auto-detected at startup. Toggleable in settings panel. When toggled, the current model reloads on the new device. Falls back to CPU if CUDA load fails.
+
+**Mic selection:** System default used when no config. Settings panel shows available input devices; click cycles through them. Selected device passed to `sd.InputStream()`. If saved device index is not found (unplugged), falls back to system default.
 
 ## Dependencies
 
