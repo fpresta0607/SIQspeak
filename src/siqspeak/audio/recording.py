@@ -154,8 +154,22 @@ def start_recording(state: AppState) -> None:
         state.mic_stream = sd.InputStream(**mic_kwargs)
         state.mic_stream.start()
     except Exception:
-        log.exception("Failed to open microphone (device=%s)", state.mic_device)
         state.mic_stream = None
+        if state.mic_device is not None:
+            log.warning("Mic device %s unavailable, falling back to default",
+                        state.mic_device, exc_info=True)
+            state.mic_device = None
+            mic_kwargs.pop("device", None)
+            try:
+                state.mic_stream = sd.InputStream(**mic_kwargs)
+                state.mic_stream.start()
+            except Exception:
+                log.exception("Failed to open default microphone")
+                state.mic_stream = None
+        else:
+            log.exception("Failed to open microphone")
+
+    if state.mic_stream is None:
         set_state(state, "idle")
         if streaming and state.stream_queue:
             state.stream_queue.put(("stop", None))

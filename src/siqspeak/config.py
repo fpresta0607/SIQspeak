@@ -182,19 +182,19 @@ def _screen_size() -> tuple[int, int]:
 def _log_panel_dims() -> tuple[int, int]:
     """Compute log panel width and max height based on screen size."""
     sw, sh = _screen_size()
-    w = max(500, min(int(sw * 0.45), 900))
+    w = max(580, min(int(sw * 0.50), 1000))
     h = max(400, min(int(sh * 0.65), 1000))
     return w, h
 
 
 def _model_panel_width() -> int:
     sw, _ = _screen_size()
-    return max(340, min(int(sw * 0.25), 440))
+    return max(380, min(int(sw * 0.30), 520))
 
 
 def _settings_panel_width() -> int:
     sw, _ = _screen_size()
-    return max(300, min(int(sw * 0.22), 380))
+    return max(380, min(int(sw * 0.30), 520))
 
 
 # ---------------------------------------------------------------------------

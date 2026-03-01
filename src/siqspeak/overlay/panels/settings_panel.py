@@ -39,20 +39,30 @@ def _draw_toggle_pill(draw: ImageDraw.Draw, x: int, y: int, w: int, h: int,
         draw.text((x + w - 30, y + 6), "OFF", font=font_toggle, fill=(*GRAY, 200))
 
 
+def _wrap_mic_name(mic_name: str, suffix: str, font, max_w: int) -> list[str]:
+    """Word-wrap mic device name, appending suffix to the last line."""
+    words = mic_name.split()
+    if not words:
+        return [mic_name + suffix]
+    lines: list[str] = []
+    current = words[0]
+    for word in words[1:]:
+        test = current + " " + word
+        if font.getlength(test + suffix) <= max_w:
+            current = test
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current + suffix)
+    return lines
+
+
 def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     """Render settings panel with stream toggle, GPU toggle, mic selector, and Quit."""
     panel_w = _settings_panel_width()
     row_h = 44
     quit_btn_h = 44
-    n_rows = 2 + (1 if state.has_cuda else 0)  # stream + mic + (gpu)
-    panel_h = SETTINGS_HEADER_H + row_h * n_rows + 12 + quit_btn_h + 20
-
-    img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle(
-        [0, 0, panel_w - 1, panel_h - 1], radius=14,
-        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.94 * 255)),
-    )
+    mic_line_h = 18
 
     try:
         font_title = ImageFont.truetype("seguisb.ttf", 22)
@@ -66,6 +76,28 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
         font_toggle = font
         font_btn = font
         font_mic = font
+
+    # Resolve mic name and wrap lines before sizing the panel
+    if state.mic_devices:
+        if state.mic_device is not None:
+            mic_name = next((d["name"] for d in state.mic_devices if d["index"] == state.mic_device), "Default")
+        else:
+            mic_name = state.mic_devices[0]["name"] + " *"
+    else:
+        mic_name = "No devices"
+    mic_lines = _wrap_mic_name(mic_name, "  >", font_mic, panel_w - 40)
+    mic_row_h = max(row_h, 34 + len(mic_lines) * mic_line_h + 8)
+
+    # Calculate panel height with variable mic row
+    toggle_rows = 1 + (1 if state.has_cuda else 0)  # stream + gpu
+    panel_h = SETTINGS_HEADER_H + 8 + row_h * toggle_rows + mic_row_h + 12 + quit_btn_h + 20
+
+    img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle(
+        [0, 0, panel_w - 1, panel_h - 1], radius=14,
+        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.94 * 255)),
+    )
 
     # Header
     draw.text((20, 12), "Settings", fill=(*WHITE, 230), font=font_title)
@@ -88,23 +120,15 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
                           state.device == "cuda", font_toggle)
         cur_y += row_h
 
-    # --- Mic selector row ---
+    # --- Mic selector row (wraps long names) ---
     draw.text((20, cur_y + 10), "Microphone", font=font, fill=(230, 240, 255, 220))
-    if state.mic_devices:
-        if state.mic_device is not None:
-            mic_name = next((d["name"] for d in state.mic_devices if d["index"] == state.mic_device), "Default")
-        else:
-            mic_name = state.mic_devices[0]["name"] + " *"
-        max_chars = 18
-        display_name = mic_name[:max_chars] + "..." if len(mic_name) > max_chars else mic_name
-    else:
-        display_name = "No devices"
-    name_text = f"{display_name}  >"
-    bbox = draw.textbbox((0, 0), name_text, font=font_mic)
-    text_w = bbox[2] - bbox[0]
-    draw.text((panel_w - text_w - 20, cur_y + 13), name_text, font=font_mic,
-              fill=(*CYAN, 200))
-    cur_y += row_h
+    mic_text_y = cur_y + 34
+    for ml in mic_lines:
+        bbox = draw.textbbox((0, 0), ml, font=font_mic)
+        tw = bbox[2] - bbox[0]
+        draw.text((panel_w - tw - 20, mic_text_y), ml, font=font_mic, fill=(*CYAN, 200))
+        mic_text_y += mic_line_h
+    cur_y += mic_row_h
 
     # Quit button -- red rounded rect
     btn_y = cur_y + 12

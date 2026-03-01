@@ -125,40 +125,33 @@ def _render_log_panel(state: AppState) -> tuple[np.ndarray, int, int]:
             draw.text((LOG_TEXT_LEFT, y + 10 + li * LOG_LINE_H), line,
                        fill=(*WHITE, 245), font=font_text)
 
-        # Copy button with hover / copied states (38x36)
-        copy_x = panel_w - LOG_COPY_BTN_W - 8
-        btn_cy = y + row_h // 2
-        is_hover = (state.copy_hover_row == idx)
-        is_just_copied = (is_copied_fresh and state.copied_row == idx)
+        # Copy button: only for real transcriptions, visible on hover/copied
+        has_text = bool(entry.get("text")) and entry.get("time_epoch", 0) != 0
+        if has_text:
+            copy_x = panel_w - LOG_COPY_BTN_W - 8
+            btn_cy = y + row_h // 2
+            is_hover = (state.copy_hover_row == idx)
+            is_just_copied = (is_copied_fresh and state.copied_row == idx)
 
-        btn_hw = 19  # half-width
-        btn_hh = 18  # half-height
+            btn_hw = 19  # half-width
+            btn_hh = 18  # half-height
 
-        if is_just_copied:
-            draw.rounded_rectangle(
-                [copy_x, btn_cy - btn_hh, copy_x + btn_hw * 2, btn_cy + btn_hh],
-                radius=6, fill=(40, 180, 80, 100),
-            )
-            _draw_centered_text(draw, "\u2713", copy_x + btn_hw, btn_cy,
-                                font_check, (40, 220, 80, 255))
-        elif is_hover:
-            draw.rounded_rectangle(
-                [copy_x, btn_cy - btn_hh, copy_x + btn_hw * 2, btn_cy + btn_hh],
-                radius=6, fill=(*CYAN, 90),
-            )
-            draw.rectangle([copy_x + 9, btn_cy - 11, copy_x + 21, btn_cy + 6],
-                            outline=(*CYAN, 255), width=2)
-            draw.rectangle([copy_x + 16, btn_cy - 7, copy_x + 28, btn_cy + 10],
-                            outline=(*CYAN, 255), width=2)
-        else:
-            draw.rounded_rectangle(
-                [copy_x, btn_cy - btn_hh, copy_x + btn_hw * 2, btn_cy + btn_hh],
-                radius=6, fill=(*CYAN, 40),
-            )
-            draw.rectangle([copy_x + 9, btn_cy - 11, copy_x + 21, btn_cy + 6],
-                            outline=(*CYAN, 150), width=1)
-            draw.rectangle([copy_x + 16, btn_cy - 7, copy_x + 28, btn_cy + 10],
-                            outline=(*CYAN, 150), width=1)
+            if is_just_copied:
+                draw.rounded_rectangle(
+                    [copy_x, btn_cy - btn_hh, copy_x + btn_hw * 2, btn_cy + btn_hh],
+                    radius=6, fill=(40, 180, 80, 100),
+                )
+                _draw_centered_text(draw, "\u2713", copy_x + btn_hw, btn_cy,
+                                    font_check, (40, 220, 80, 255))
+            elif is_hover:
+                draw.rounded_rectangle(
+                    [copy_x, btn_cy - btn_hh, copy_x + btn_hw * 2, btn_cy + btn_hh],
+                    radius=6, fill=(*CYAN, 90),
+                )
+                draw.rectangle([copy_x + 9, btn_cy - 11, copy_x + 21, btn_cy + 6],
+                                outline=(*CYAN, 255), width=2)
+                draw.rectangle([copy_x + 16, btn_cy - 7, copy_x + 28, btn_cy + 10],
+                                outline=(*CYAN, 255), width=2)
 
         if idx < len(entries) - 1:
             div_y = y + row_h - 1
