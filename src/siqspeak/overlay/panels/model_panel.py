@@ -1,0 +1,148 @@
+from __future__ import annotations
+
+import ctypes
+import ctypes.wintypes
+import logging
+
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+from siqspeak.config import (
+    AVAILABLE_MODELS,
+    CYAN,
+    GRAY,
+    MODEL_PANEL_HEADER_H,
+    MODEL_PANEL_ROW_H,
+    MODEL_SIZES_MB,
+    PILL_BG,
+    WHITE,
+    _model_panel_width,
+)
+from siqspeak.model.manager import _is_model_cached
+from siqspeak.overlay.panels import _show_panel_window
+from siqspeak.overlay.rendering import _rgba_to_premul_bgra
+from siqspeak.state import AppState
+
+log = logging.getLogger("siqspeak")
+
+
+def _render_model_panel(state: AppState) -> tuple[np.ndarray, int, int]:
+    """Render the model selector panel with cache/download status."""
+    row_count = len(AVAILABLE_MODELS)
+    panel_w = _model_panel_width()
+    panel_h = MODEL_PANEL_HEADER_H + row_count * MODEL_PANEL_ROW_H + 16
+
+    img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle(
+        [0, 0, panel_w - 1, panel_h - 1], radius=14,
+        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.94 * 255)),
+    )
+
+    try:
+        font_title = ImageFont.truetype("seguisb.ttf", 22)
+        font = ImageFont.truetype("seguisb.ttf", 18)
+        font_small = ImageFont.truetype("seguisb.ttf", 14)
+        font_check = ImageFont.truetype("seguisb.ttf", 20)
+    except OSError:
+        font_title = ImageFont.load_default()
+        font = font_title
+        font_small = font
+        font_check = font
+
+    # Header
+    draw.text((20, 12), "Models", fill=(*WHITE, 230), font=font_title)
+    draw.line([(20, MODEL_PANEL_HEADER_H - 4), (panel_w - 20, MODEL_PANEL_HEADER_H - 4)],
+              fill=(*GRAY, 50))
+
+    ORANGE = (255, 160, 50)
+
+    for idx, name in enumerate(AVAILABLE_MODELS):
+        y = MODEL_PANEL_HEADER_H + idx * MODEL_PANEL_ROW_H
+        is_loaded = (name == state.loaded_model_name)
+        is_this_loading = (state.model_loading and name == state.model_loading_name)
+        is_downloading = (is_this_loading and state.download_progress < 1.0
+                          and state.download_progress > 0.0)
+        is_download_starting = (is_this_loading and state.download_progress == 0.0
+                                and not _is_model_cached(name))
+        is_confirming = (name == state.download_confirm_name and not state.model_loading)
+        has_error = (state.download_error and name == state.model_loading_name
+                     and not state.model_loading)
+        is_cached = _is_model_cached(name) if not is_loaded else True
+        size_mb = MODEL_SIZES_MB.get(name, 0)
+
+        # Vertically center text in row
+        text_y = y + (MODEL_PANEL_ROW_H - 18) // 2
+
+        if has_error:
+            draw.text((54, text_y), name, fill=(*ORANGE, 240), font=font)
+            draw.text((panel_w - 20, text_y + 2), state.download_error,
+                      fill=(*ORANGE, 200), font=font_small, anchor="ra")
+        elif is_downloading or is_download_starting:
+            draw.text((54, text_y - 4), name, fill=(*CYAN, 220), font=font)
+            if is_downloading:
+                pct_text = f"{int(state.download_progress * 100)}%"
+                draw.text((panel_w - 20, text_y - 2), pct_text,
+                          fill=(*CYAN, 200), font=font_small, anchor="ra")
+                bar_x = 54
+                bar_y = y + MODEL_PANEL_ROW_H - 16
+                bar_w = panel_w - 54 - 20
+                bar_h = 4
+                draw.rounded_rectangle(
+                    [bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
+                    radius=2, fill=(*GRAY, 40))
+                fill_w = int(bar_w * state.download_progress)
+                if fill_w > 0:
+                    draw.rounded_rectangle(
+                        [bar_x, bar_y, bar_x + fill_w, bar_y + bar_h],
+                        radius=2, fill=(*CYAN, 200))
+            else:
+                draw.text((panel_w - 20, text_y - 2), "connecting...",
+                          fill=(*GRAY, 150), font=font_small, anchor="ra")
+        elif is_this_loading:
+            draw.text((20, text_y), "...", fill=(*CYAN, 200), font=font_small)
+            draw.text((54, text_y), name, fill=(*CYAN, 220), font=font)
+            draw.text((panel_w - 20, text_y + 2), "loading...",
+                      fill=(*GRAY, 150), font=font_small, anchor="ra")
+        elif is_confirming:
+            draw.rounded_rectangle(
+                [4, y + 2, panel_w - 4, y + MODEL_PANEL_ROW_H - 2],
+                radius=8, fill=(*CYAN, 20))
+            draw.text((54, y + 10), name, fill=(*CYAN, 255), font=font)
+            confirm_text = f"Download ~{size_mb} MB?"
+            draw.text((54, y + 32), confirm_text,
+                      fill=(*CYAN, 180), font=font_small)
+            draw.text((panel_w - 20, y + 20), "click to confirm",
+                      fill=(*CYAN, 140), font=font_small, anchor="ra")
+        elif is_loaded:
+            draw.text((20, text_y - 2), "\u2713", fill=(*CYAN, 255), font=font_check)
+            draw.text((54, text_y), name, fill=(*CYAN, 255), font=font)
+        elif is_cached:
+            draw.text((54, text_y), name, fill=(*WHITE, 220), font=font)
+            draw.text((panel_w - 20, text_y + 2), "ready",
+                      fill=(*GRAY, 100), font=font_small, anchor="ra")
+        else:
+            draw.text((54, text_y), name, fill=(*WHITE, 180), font=font)
+            size_label = f"~{size_mb} MB" if size_mb < 1000 else f"~{size_mb / 1000:.1f} GB"
+            draw.text((panel_w - 20, text_y + 2), size_label,
+                      fill=(*GRAY, 100), font=font_small, anchor="ra")
+
+        if idx < row_count - 1:
+            div_y = y + MODEL_PANEL_ROW_H - 1
+            draw.line([(20, div_y), (panel_w - 20, div_y)], fill=(*GRAY, 35))
+
+    return _rgba_to_premul_bgra(img), panel_w, panel_h
+
+
+def _show_model_panel(state: AppState) -> None:
+    if not state.model_panel_hwnd or not state.overlay_hwnd:
+        return
+    buf, pw, ph = _render_model_panel(state)
+    _show_panel_window(state, state.model_panel_hwnd, buf, pw, ph)
+    state.active_panel = "model"
+
+
+def _hide_model_panel(state: AppState) -> None:
+    if state.model_panel_hwnd and state.active_panel == "model":
+        ctypes.windll.user32.ShowWindow(state.model_panel_hwnd, 0)
+        state.active_panel = None

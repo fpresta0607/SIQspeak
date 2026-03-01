@@ -3,6 +3,14 @@
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+dist/
+build/
+
+# Dev tools
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
 
 # Runtime
 dictate.log

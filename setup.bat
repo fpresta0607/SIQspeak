@@ -48,7 +48,7 @@ if not exist ".venv\Scripts\python.exe" (
 :: ------------------------------------------------------------------
 echo   [..] Installing dependencies...
 .venv\Scripts\pip install --upgrade pip >nul 2>&1
-.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\pip install -e .
 if %errorlevel% neq 0 (
     echo   [!] Failed to install dependencies.
     pause
@@ -87,7 +87,7 @@ if /i "%SHORTCUT%"=="Y" (
         "$ws = New-Object -ComObject WScript.Shell; ^
          $sc = $ws.CreateShortcut([IO.Path]::Combine($ws.SpecialFolders('Desktop'), 'SIQspeak.lnk')); ^
          $sc.TargetPath = (Resolve-Path '.venv\Scripts\pythonw.exe').Path; ^
-         $sc.Arguments = (Resolve-Path 'dictate.py').Path; ^
+         $sc.Arguments = '-m siqspeak'; ^
          $sc.WorkingDirectory = (Resolve-Path '.').Path; ^
          $sc.IconLocation = (Resolve-Path 'dictate.ico').Path + ',0'; ^
          $sc.Description = 'SIQspeak — local speech-to-text'; ^
@@ -108,12 +108,12 @@ echo.
 set /p RUNNOW="   Run SIQspeak now? (Y/N): "
 if /i "%RUNNOW%"=="Y" (
     echo   [..] Starting SIQspeak...
-    start "" ".venv\Scripts\pythonw.exe" dictate.py
+    start "" ".venv\Scripts\pythonw.exe" -m siqspeak
     echo   [OK] SIQspeak is running in the system tray.
 ) else (
     echo.
     echo   To run later, double-click the desktop shortcut or run:
-    echo     .venv\Scripts\pythonw.exe dictate.py
+    echo     .venv\Scripts\pythonw.exe -m siqspeak
 )
 
 echo.
