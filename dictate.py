@@ -2,7 +2,7 @@
 SIQspeak — hold Ctrl+Shift+Space to record, release to transcribe and paste.
 
 Runs silently in the system tray. Gray = idle, Cyan = recording, Blue = transcribing.
-Floating pill with audio-reactive dots; hover for transcription history.
+Floating pill with 3-icon toolbar (info, model selector, settings); click to toggle panels.
 """
 
 import ctypes
@@ -24,6 +24,14 @@ from faster_whisper import WhisperModel
 import pyperclip
 from PIL import Image, ImageDraw, ImageFont
 from pystray import Icon, MenuItem, Menu
+
+# ---------------------------------------------------------------------------
+# DPI awareness — must be set before any Win32 calls
+# ---------------------------------------------------------------------------
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+except Exception:
+    pass
 
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -81,30 +89,41 @@ _hotkey_busy = False
 _current_level = 0.0   # audio RMS (0..1), written by mic callback
 _display_level = 0.0   # smoothed for rendering
 _log_panel_hwnd = None
-_log_panel_visible = False
-_hover_grace_deadline = 0.0  # time.monotonic() deadline for hiding log panel
+_model_panel_hwnd = None
+_settings_panel_hwnd = None
+_active_panel: str | None = None  # "info" | "model" | "settings" | None
 _transcription_log: list[dict] = []  # {text, timestamp, time_epoch}
 _copy_debounce = False
 _pill_current_mode = "idle"  # tracks which pill size is displayed
+_idle_click_debounce = False
+_model_click_debounce = False
+_settings_click_debounce = False
+_model_loading = False
+_model_loading_name = ""
+_loaded_model_name = MODEL_NAME
 
 # ---------------------------------------------------------------------------
 # Tray icon
 # ---------------------------------------------------------------------------
 
 
-def make_icon(color: str) -> Image.Image:
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.ellipse([8, 8, 56, 56], fill=TRAY_COLORS[color])
-    if color == "cyan":
-        draw.ellipse([24, 24, 40, 40], fill=(255, 255, 255, 255))
-    return img
+_tray_icon_img: Image.Image | None = None
+
+
+def _load_tray_icon() -> Image.Image:
+    global _tray_icon_img
+    if _tray_icon_img is None:
+        ico_path = os.path.join(SCRIPT_DIR, "dictate.ico")
+        _tray_icon_img = Image.open(ico_path).resize((64, 64), Image.LANCZOS).convert("RGBA")
+    return _tray_icon_img
+
+
+def make_icon(_color: str = "") -> Image.Image:
+    return _load_tray_icon()
 
 
 def set_state(state: str) -> None:
     global _overlay_target_state
-    if icon:
-        icon.icon = make_icon(STATE_TRAY_COLOR[state])
     _overlay_target_state = state
 
 
@@ -244,15 +263,16 @@ def focus_window(hwnd: int) -> None:
 # ---------------------------------------------------------------------------
 # Overlay: idle icon + active pill with audio-reactive dots
 # ---------------------------------------------------------------------------
-# Idle: small circle with "i" icon
-IDLE_W = 36
+# Idle: 3-icon toolbar (info, model, settings)
+IDLE_W = 110
 IDLE_H = 36
+IDLE_ICON_ZONE_W = 36  # each icon zone width
 
-# Active: half-size pill with 8 dots
-ACTIVE_W = 150
-ACTIVE_H = 40
-NUM_DOTS = 8
-DOT_R = 3.0
+# Active: compact pill with 6 dots
+ACTIVE_W = 120
+ACTIVE_H = 32
+NUM_DOTS = 6
+DOT_R = 2.5
 DOT_SPACING = 14.0
 DOT_START_X = (ACTIVE_W - (NUM_DOTS - 1) * DOT_SPACING) / 2
 DOT_Y = ACTIVE_H / 2.0
@@ -263,6 +283,15 @@ LOG_PANEL_ROW_H = 32
 LOG_PANEL_MAX_VISIBLE = 8
 LOG_PANEL_PADDING = 8
 LOG_PANEL_BG_ALPHA = 0.92
+
+# Model selector panel
+MODEL_PANEL_W = 220
+MODEL_PANEL_ROW_H = 36
+AVAILABLE_MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
+
+# Settings panel
+SETTINGS_PANEL_W = 160
+SETTINGS_PANEL_H = 60
 
 def _make_pill_mask(w: int, h: int) -> np.ndarray:
     """SDF-based rounded rectangle mask."""
@@ -297,29 +326,87 @@ _idle_bg = _make_pill_bg(IDLE_W, IDLE_H, _idle_mask)
 
 
 def _build_idle_frame() -> np.ndarray:
-    """Pre-render idle icon: dark circle with 'i' letter."""
+    """Pre-render idle toolbar: 3-icon pill (info | model | settings)."""
     buf = _idle_bg.copy()
-    # Render "i" using Pillow
     img = Image.new("RGBA", (IDLE_W, IDLE_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     try:
-        font = ImageFont.truetype("segoeui.ttf", 20)
+        font = ImageFont.truetype("segoeui.ttf", 18)
     except OSError:
         font = ImageFont.load_default()
-    bbox = draw.textbbox((0, 0), "i", font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    tx = (IDLE_W - tw) // 2 - bbox[0]
-    ty = (IDLE_H - th) // 2 - bbox[1]
-    draw.text((tx, ty), "i", fill=(*CYAN, 220), font=font)
-    # Composite the "i" onto the pill background
-    pixels = np.array(img, dtype=np.float32) / 255.0  # RGBA
+
+    # Zone centers: 3 zones of IDLE_ICON_ZONE_W each, plus 2px gap between
+    zone_w = IDLE_ICON_ZONE_W
+    zone_centers = [zone_w // 2, IDLE_W // 2, IDLE_W - zone_w // 2]
+
+    # Separator lines between zones
+    for sep_x in [zone_w, IDLE_W - zone_w]:
+        draw.line([(sep_x, 8), (sep_x, IDLE_H - 8)], fill=(*GRAY, 60))
+
+    # --- Left icon: info "i" (cyan) ---
+    _draw_centered_text(draw, "i", zone_centers[0], IDLE_H // 2, font, (*CYAN, 220))
+
+    # --- Center icon: model hexagon (white) ---
+    cx, cy = zone_centers[1], IDLE_H // 2
+    r = 9
+    hexagon = []
+    for k in range(6):
+        angle = math.radians(60 * k - 90)
+        hexagon.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
+    draw.polygon(hexagon, outline=(*WHITE, 200), fill=None)
+
+    # --- Right icon: gear (gray) ---
+    _draw_gear_icon(draw, zone_centers[2], IDLE_H // 2, 9, GRAY)
+
+    # Composite onto pill background
+    pixels = np.array(img, dtype=np.float32) / 255.0
     src_a = pixels[:, :, 3]
     inv = 1.0 - src_a
-    # PIL is RGBA, buf is BGRA pre-multiplied
-    for c_src, c_dst in ((2, 0), (1, 1), (0, 2)):  # R->B, G->G, B->R
+    for c_src, c_dst in ((2, 0), (1, 1), (0, 2)):
         buf[:, :, c_dst] = pixels[:, :, c_src] * src_a + buf[:, :, c_dst] * inv
     buf[:, :, 3] = src_a + buf[:, :, 3] * inv
     return (buf * 255).clip(0, 255).astype(np.uint8)
+
+
+def _draw_centered_text(
+    draw: ImageDraw.ImageDraw, text: str, cx: int, cy: int,
+    font: ImageFont.FreeTypeFont, fill: tuple,
+) -> None:
+    """Draw text centered at (cx, cy)."""
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    x = cx - tw // 2 - bbox[0]
+    y = cy - th // 2 - bbox[1]
+    draw.text((x, y), text, fill=fill, font=font)
+
+
+def _draw_gear_icon(
+    draw: ImageDraw.ImageDraw, cx: int, cy: int, r: int, color: tuple,
+) -> None:
+    """Draw a simple gear icon using circles and notches."""
+    # Outer circle
+    draw.ellipse(
+        [cx - r, cy - r, cx + r, cy + r],
+        outline=(*color, 200), fill=None, width=1,
+    )
+    # Inner circle
+    ir = r * 0.45
+    draw.ellipse(
+        [cx - ir, cy - ir, cx + ir, cy + ir],
+        fill=(*color, 180),
+    )
+    # Teeth (8 small rectangles radiating outward)
+    for k in range(8):
+        angle = math.radians(45 * k)
+        tooth_inner = r - 2
+        tooth_outer = r + 2
+        dx = math.cos(angle)
+        dy = math.sin(angle)
+        x1 = cx + dx * tooth_inner
+        y1 = cy + dy * tooth_inner
+        x2 = cx + dx * tooth_outer
+        y2 = cy + dy * tooth_outer
+        draw.line([(x1, y1), (x2, y2)], fill=(*color, 200), width=2)
 
 
 _idle_frame = _build_idle_frame()
@@ -443,21 +530,6 @@ def _create_overlay_window() -> int:
     )
 
 
-def _create_log_panel_window() -> int:
-    """Create layered window for the transcription log panel (NOT click-through)."""
-    user32 = ctypes.windll.user32
-    WS_EX = (
-        0x00080000  # WS_EX_LAYERED
-        | 0x00000008  # WS_EX_TOPMOST
-        | 0x08000000  # WS_EX_NOACTIVATE
-        | 0x00000080  # WS_EX_TOOLWINDOW
-    )
-    return user32.CreateWindowExW(
-        WS_EX, "STATIC", "", 0x80000000,
-        0, 0, LOG_PANEL_W, 10,  # position set later
-        None, None, None, None,
-    )
-
 
 def _pill_screen_rect() -> tuple[int, int, int, int]:
     """Return (x, y, w, h) of the pill window on screen."""
@@ -554,42 +626,341 @@ def _render_log_panel() -> tuple[np.ndarray, int, int]:
             div_y = y + LOG_PANEL_ROW_H - 1
             draw.line([(8, div_y), (panel_w - 8, div_y)], fill=(GRAY[0], GRAY[1], GRAY[2], 40))
 
-    # Convert RGBA to pre-multiplied BGRA
+    return _rgba_to_premul_bgra(img), panel_w, panel_h
+
+
+def _show_panel_window(hwnd: int, buf: np.ndarray, pw: int, ph: int) -> None:
+    """Position a panel window above the pill and show it."""
+    if not hwnd or not _overlay_hwnd:
+        return
+    user32 = ctypes.windll.user32
+    px, py, pill_w, _ = _pill_screen_rect()
+    pill_center_x = px + pill_w // 2
+    panel_x = pill_center_x - pw // 2
+    panel_y = py - ph - 8
+    user32.SetWindowPos(hwnd, None, panel_x, panel_y, pw, ph, 0x0010 | 0x0004)
+    _update_layered_window(hwnd, buf, pw, ph)
+    user32.ShowWindow(hwnd, 8)  # SW_SHOWNA
+
+
+def _show_log_panel() -> None:
+    """Render and display the log panel above the pill."""
+    global _active_panel
+    if not _log_panel_hwnd or not _overlay_hwnd:
+        return
+    buf, pw, ph = _render_log_panel()
+    _show_panel_window(_log_panel_hwnd, buf, pw, ph)
+    _active_panel = "info"
+
+
+def _hide_log_panel() -> None:
+    global _active_panel
+    if _log_panel_hwnd and _active_panel == "info":
+        ctypes.windll.user32.ShowWindow(_log_panel_hwnd, 0)  # SW_HIDE
+        _active_panel = None
+
+
+# ---------------------------------------------------------------------------
+# Model selector panel
+# ---------------------------------------------------------------------------
+def _create_panel_window() -> int:
+    """Create a generic layered panel window (NOT click-through)."""
+    user32 = ctypes.windll.user32
+    WS_EX = (
+        0x00080000  # WS_EX_LAYERED
+        | 0x00000008  # WS_EX_TOPMOST
+        | 0x08000000  # WS_EX_NOACTIVATE
+        | 0x00000080  # WS_EX_TOOLWINDOW
+    )
+    return user32.CreateWindowExW(
+        WS_EX, "STATIC", "", 0x80000000,
+        0, 0, 10, 10,
+        None, None, None, None,
+    )
+
+
+def _rgba_to_premul_bgra(img: Image.Image) -> np.ndarray:
+    """Convert RGBA PIL image to pre-multiplied BGRA numpy buffer."""
     pixels = np.array(img, dtype=np.float32) / 255.0
     bgra = np.zeros_like(pixels)
     bgra[:, :, 0] = pixels[:, :, 2] * pixels[:, :, 3]  # B
     bgra[:, :, 1] = pixels[:, :, 1] * pixels[:, :, 3]  # G
     bgra[:, :, 2] = pixels[:, :, 0] * pixels[:, :, 3]  # R
     bgra[:, :, 3] = pixels[:, :, 3]
-    return (bgra * 255).clip(0, 255).astype(np.uint8), panel_w, panel_h
+    return (bgra * 255).clip(0, 255).astype(np.uint8)
 
 
-def _show_log_panel() -> None:
-    """Render and display the log panel above the pill."""
-    global _log_panel_visible
-    if not _log_panel_hwnd or not _overlay_hwnd:
+def _render_model_panel() -> tuple[np.ndarray, int, int]:
+    """Render the model selector panel."""
+    row_count = len(AVAILABLE_MODELS)
+    panel_h = 8 + row_count * MODEL_PANEL_ROW_H + 8
+    panel_w = MODEL_PANEL_W
+
+    img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle(
+        [0, 0, panel_w - 1, panel_h - 1], radius=10,
+        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.92 * 255)),
+    )
+
+    try:
+        font = ImageFont.truetype("segoeui.ttf", 14)
+        font_small = ImageFont.truetype("segoeui.ttf", 11)
+    except OSError:
+        font = ImageFont.load_default()
+        font_small = font
+
+    for idx, name in enumerate(AVAILABLE_MODELS):
+        y = 8 + idx * MODEL_PANEL_ROW_H
+        is_loaded = (name == _loaded_model_name)
+        is_loading = (_model_loading and name == _model_loading_name)
+
+        # Checkmark or loading indicator
+        if is_loading:
+            draw.text((10, y + 8), "...", fill=(*CYAN, 200), font=font_small)
+        elif is_loaded:
+            draw.text((10, y + 7), "\u2713", fill=(*CYAN, 255), font=font)
+
+        # Model name
+        text_color = (*CYAN, 255) if is_loaded else (*WHITE, 220)
+        draw.text((32, y + 8), name, fill=text_color, font=font)
+
+        # Divider
+        if idx < row_count - 1:
+            div_y = y + MODEL_PANEL_ROW_H - 1
+            draw.line([(8, div_y), (panel_w - 8, div_y)], fill=(*GRAY, 40))
+
+    return _rgba_to_premul_bgra(img), panel_w, panel_h
+
+
+def _show_model_panel() -> None:
+    global _active_panel
+    if not _model_panel_hwnd or not _overlay_hwnd:
         return
+    buf, pw, ph = _render_model_panel()
+    _show_panel_window(_model_panel_hwnd, buf, pw, ph)
+    _active_panel = "model"
 
-    buf, pw, ph = _render_log_panel()
+
+def _hide_model_panel() -> None:
+    global _active_panel
+    if _model_panel_hwnd and _active_panel == "model":
+        ctypes.windll.user32.ShowWindow(_model_panel_hwnd, 0)
+        _active_panel = None
+
+
+# ---------------------------------------------------------------------------
+# Settings panel
+# ---------------------------------------------------------------------------
+def _render_settings_panel() -> tuple[np.ndarray, int, int]:
+    """Render settings panel with Quit button."""
+    panel_w, panel_h = SETTINGS_PANEL_W, SETTINGS_PANEL_H
+
+    img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle(
+        [0, 0, panel_w - 1, panel_h - 1], radius=10,
+        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.92 * 255)),
+    )
+
+    try:
+        font = ImageFont.truetype("segoeui.ttf", 14)
+    except OSError:
+        font = ImageFont.load_default()
+
+    # Quit button — red rounded rect
+    btn_x, btn_y = 20, 14
+    btn_w, btn_h = panel_w - 40, 32
+    draw.rounded_rectangle(
+        [btn_x, btn_y, btn_x + btn_w, btn_y + btn_h],
+        radius=6, fill=(180, 40, 40, 220),
+    )
+    _draw_centered_text(draw, "Quit", panel_w // 2, btn_y + btn_h // 2, font, (255, 255, 255, 240))
+
+    return _rgba_to_premul_bgra(img), panel_w, panel_h
+
+
+def _show_settings_panel() -> None:
+    global _active_panel
+    if not _settings_panel_hwnd or not _overlay_hwnd:
+        return
+    buf, pw, ph = _render_settings_panel()
+    _show_panel_window(_settings_panel_hwnd, buf, pw, ph)
+    _active_panel = "settings"
+
+
+def _hide_settings_panel() -> None:
+    global _active_panel
+    if _settings_panel_hwnd and _active_panel == "settings":
+        ctypes.windll.user32.ShowWindow(_settings_panel_hwnd, 0)
+        _active_panel = None
+
+
+# ---------------------------------------------------------------------------
+# Unified panel management
+# ---------------------------------------------------------------------------
+def _hide_all_panels() -> None:
+    """Hide whichever panel is currently active."""
+    global _active_panel
+    if _active_panel == "info" and _log_panel_hwnd:
+        ctypes.windll.user32.ShowWindow(_log_panel_hwnd, 0)
+    elif _active_panel == "model" and _model_panel_hwnd:
+        ctypes.windll.user32.ShowWindow(_model_panel_hwnd, 0)
+    elif _active_panel == "settings" and _settings_panel_hwnd:
+        ctypes.windll.user32.ShowWindow(_settings_panel_hwnd, 0)
+    _active_panel = None
+
+
+_PANEL_SHOW = {
+    "info": _show_log_panel,
+    "model": _show_model_panel,
+    "settings": _show_settings_panel,
+}
+
+
+def _toggle_panel(name: str) -> None:
+    """Toggle a panel: if it's active close it, otherwise open it (closing any other)."""
+    if _active_panel == name:
+        _hide_all_panels()
+    else:
+        _hide_all_panels()
+        _PANEL_SHOW[name]()
+
+
+# ---------------------------------------------------------------------------
+# Click handlers
+# ---------------------------------------------------------------------------
+def _get_idle_icon_zone(cursor_x: int, pill_left: int) -> int | None:
+    """Map cursor X to icon zone 0 (info), 1 (model), 2 (settings), or None."""
+    rx = cursor_x - pill_left
+    if rx < 0 or rx >= IDLE_W:
+        return None
+    zone = rx // IDLE_ICON_ZONE_W
+    return min(zone, 2)
+
+
+_ZONE_PANEL = {0: "info", 1: "model", 2: "settings"}
+
+
+def _handle_idle_pill_click() -> None:
+    """Detect click on idle pill and toggle the appropriate panel."""
+    global _idle_click_debounce
     user32 = ctypes.windll.user32
 
-    # Position above pill, centered
-    px, py, pill_w, _ = _pill_screen_rect()
-    pill_center_x = px + pill_w // 2
-    panel_x = pill_center_x - pw // 2
-    panel_y = py - ph - 8
+    if not (user32.GetAsyncKeyState(0x01) & 0x8000):
+        _idle_click_debounce = False
+        return
 
-    user32.SetWindowPos(_log_panel_hwnd, None, panel_x, panel_y, pw, ph, 0x0010 | 0x0004)
-    _update_layered_window(_log_panel_hwnd, buf, pw, ph)
-    user32.ShowWindow(_log_panel_hwnd, 8)  # SW_SHOWNA
-    _log_panel_visible = True
+    if _idle_click_debounce:
+        return
+
+    if not _is_cursor_over_hwnd(_overlay_hwnd):
+        # Click outside pill — if also outside active panel, hide all
+        if _active_panel:
+            active_hwnd = {
+                "info": _log_panel_hwnd,
+                "model": _model_panel_hwnd,
+                "settings": _settings_panel_hwnd,
+            }.get(_active_panel)
+            if not _is_cursor_over_hwnd(active_hwnd):
+                _hide_all_panels()
+                _idle_click_debounce = True
+        return
+
+    # Click is on the pill — determine zone
+    pt = ctypes.wintypes.POINT()
+    user32.GetCursorPos(ctypes.byref(pt))
+    rect = ctypes.wintypes.RECT()
+    user32.GetWindowRect(_overlay_hwnd, ctypes.byref(rect))
+
+    zone = _get_idle_icon_zone(pt.x, rect.left)
+    if zone is not None:
+        panel_name = _ZONE_PANEL[zone]
+        _toggle_panel(panel_name)
+    _idle_click_debounce = True
 
 
-def _hide_log_panel() -> None:
-    global _log_panel_visible
-    if _log_panel_hwnd and _log_panel_visible:
-        ctypes.windll.user32.ShowWindow(_log_panel_hwnd, 0)  # SW_HIDE
-        _log_panel_visible = False
+def _handle_model_click() -> None:
+    """Detect click on a model row in the model panel."""
+    global _model_click_debounce
+    user32 = ctypes.windll.user32
+
+    if not (user32.GetAsyncKeyState(0x01) & 0x8000):
+        _model_click_debounce = False
+        return
+    if _model_click_debounce:
+        return
+    if _model_loading or not _model_panel_hwnd or _active_panel != "model":
+        return
+    if not _is_cursor_over_hwnd(_model_panel_hwnd):
+        return
+
+    _model_click_debounce = True
+    pt = ctypes.wintypes.POINT()
+    user32.GetCursorPos(ctypes.byref(pt))
+    rect = ctypes.wintypes.RECT()
+    user32.GetWindowRect(_model_panel_hwnd, ctypes.byref(rect))
+
+    ry = pt.y - rect.top - 8
+    row = ry // MODEL_PANEL_ROW_H
+    if 0 <= row < len(AVAILABLE_MODELS):
+        name = AVAILABLE_MODELS[row]
+        if name != _loaded_model_name:
+            _start_model_load(name)
+
+
+
+def _handle_settings_click() -> None:
+    """Detect click on the Quit button in the settings panel."""
+    global _should_quit, _settings_click_debounce
+    user32 = ctypes.windll.user32
+
+    if not (user32.GetAsyncKeyState(0x01) & 0x8000):
+        _settings_click_debounce = False
+        return
+    if _settings_click_debounce:
+        return
+    if not _settings_panel_hwnd or _active_panel != "settings":
+        return
+    if not _is_cursor_over_hwnd(_settings_panel_hwnd):
+        return
+
+    _settings_click_debounce = True
+    _should_quit = True
+    if icon:
+        icon.stop()
+
+
+# ---------------------------------------------------------------------------
+# Background model loading
+# ---------------------------------------------------------------------------
+def _start_model_load(name: str) -> None:
+    """Spawn a background thread to load a new Whisper model."""
+    global _model_loading, _model_loading_name
+    if _model_loading:
+        return
+    _model_loading = True
+    _model_loading_name = name
+    log.info("Loading model: %s", name)
+
+    # Re-render panel to show loading state
+    if _active_panel == "model" and _model_panel_hwnd:
+        buf, pw, ph = _render_model_panel()
+        _show_panel_window(_model_panel_hwnd, buf, pw, ph)
+
+    def _load():
+        global model, _model_loading, _loaded_model_name
+        try:
+            new_model = WhisperModel(name, device="cpu", compute_type="int8")
+            model = new_model
+            _loaded_model_name = name
+            log.info("Model loaded: %s", name)
+        except Exception:
+            log.exception("Failed to load model %s", name)
+        finally:
+            _model_loading = False
+
+    threading.Thread(target=_load, daemon=True).start()
 
 
 def _is_cursor_over_hwnd(hwnd: int) -> bool:
@@ -614,7 +985,7 @@ def _handle_copy_click() -> None:
         _copy_debounce = False
         return
 
-    if _copy_debounce or not _log_panel_visible or not _log_panel_hwnd:
+    if _copy_debounce or _active_panel != "info" or not _log_panel_hwnd:
         return
 
     # Get cursor position relative to log panel
@@ -789,7 +1160,7 @@ WM_TIMER = 0x0113
 
 
 def message_loop() -> None:
-    global _overlay_hwnd, _log_panel_hwnd, _hover_grace_deadline
+    global _overlay_hwnd, _log_panel_hwnd, _model_panel_hwnd, _settings_panel_hwnd
     user32 = ctypes.windll.user32
 
     if not user32.RegisterHotKey(None, HOTKEY_ID, HOTKEY_MOD, VK_SPACE):
@@ -802,16 +1173,24 @@ def message_loop() -> None:
         log.error("Failed to create overlay window")
         return
 
-    _log_panel_hwnd = _create_log_panel_window()
+    _log_panel_hwnd = _create_panel_window()
+    _model_panel_hwnd = _create_panel_window()
+    _settings_panel_hwnd = _create_panel_window()
 
     # Show pill immediately in idle mode
     _update_layered_window(_overlay_hwnd, _idle_frame, IDLE_W, IDLE_H)
     user32.ShowWindow(_overlay_hwnd, 8)  # SW_SHOWNA
 
     timer_id = user32.SetTimer(None, 0, 33, None)  # ~30fps
+    HWND_TOPMOST = -1
+    SWP_NOMOVE = 0x0002
+    SWP_NOSIZE = 0x0001
+    SWP_NOACTIVATE = 0x0010
 
     phase = 0.0
     current_state = "idle"
+    topmost_tick = 0
+    _was_model_loading = False
 
     msg = ctypes.wintypes.MSG()
     while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
@@ -819,14 +1198,17 @@ def message_loop() -> None:
             if _overlay_hwnd:
                 user32.KillTimer(None, timer_id)
                 user32.UnregisterHotKey(None, HOTKEY_ID)
-                _hide_log_panel()
-                if _log_panel_hwnd:
-                    user32.DestroyWindow(_log_panel_hwnd)
-                    _log_panel_hwnd = None
+                _hide_all_panels()
+                for hwnd in (_log_panel_hwnd, _model_panel_hwnd, _settings_panel_hwnd):
+                    if hwnd:
+                        user32.DestroyWindow(hwnd)
+                _log_panel_hwnd = None
+                _model_panel_hwnd = None
+                _settings_panel_hwnd = None
                 user32.DestroyWindow(_overlay_hwnd)
                 _overlay_hwnd = None
                 user32.PostQuitMessage(0)
-            continue
+            break
 
         if msg.message == WM_HOTKEY:
             on_hotkey_down()
@@ -840,12 +1222,11 @@ def message_loop() -> None:
                 phase = 0.0
 
                 if current_state == "idle":
-                    # Switch back to idle pill
                     _set_pill_mode("idle")
                     _update_layered_window(_overlay_hwnd, _idle_frame, IDLE_W, IDLE_H)
                 else:
-                    # Switch to active pill, hide log panel
-                    _hide_log_panel()
+                    # Switch to active pill, hide all panels
+                    _hide_all_panels()
                     _set_pill_mode("active")
 
             # Animate active states
@@ -854,26 +1235,36 @@ def message_loop() -> None:
                 buf = _render_frame(current_state, phase)
                 _update_layered_window(_overlay_hwnd, buf, ACTIVE_W, ACTIVE_H)
 
-            # Hover detection (only in idle state)
+            # Click-based panel interaction (only in idle state)
             if current_state == "idle":
-                over_pill = _is_cursor_over_hwnd(_overlay_hwnd)
-                over_panel = _log_panel_visible and _is_cursor_over_hwnd(_log_panel_hwnd)
+                _handle_idle_pill_click()
 
-                if over_pill or over_panel:
-                    _hover_grace_deadline = 0.0
-                    if not _log_panel_visible:
-                        _show_log_panel()
-                elif _log_panel_visible:
-                    now = time.monotonic()
-                    if _hover_grace_deadline == 0.0:
-                        _hover_grace_deadline = now + 0.3
-                    elif now >= _hover_grace_deadline:
-                        _hide_log_panel()
-                        _hover_grace_deadline = 0.0
-
-                # Handle copy button clicks
-                if _log_panel_visible:
+                # Handle clicks within active panels
+                if _active_panel == "info":
                     _handle_copy_click()
+                elif _active_panel == "model":
+                    _handle_model_click()
+                elif _active_panel == "settings":
+                    _handle_settings_click()
+
+                # Re-render model panel once after loading finishes
+                if _model_loading:
+                    _was_model_loading = True
+                elif _was_model_loading:
+                    _was_model_loading = False
+                    if _active_panel == "model" and _model_panel_hwnd:
+                        buf, pw, ph = _render_model_panel()
+                        _show_panel_window(_model_panel_hwnd, buf, pw, ph)
+
+            # Topmost re-assertion every ~2 seconds (60 ticks at 33ms)
+            topmost_tick += 1
+            if topmost_tick >= 60:
+                topmost_tick = 0
+                if _overlay_hwnd:
+                    user32.SetWindowPos(
+                        _overlay_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                    )
 
 
 # ---------------------------------------------------------------------------
