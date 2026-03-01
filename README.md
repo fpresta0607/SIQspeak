@@ -22,13 +22,28 @@ Powered by OpenAI's [Whisper](https://github.com/openai/whisper) model running l
 
 ## Installation
 
-### 1. Install Python
+### Quick Start
+
+1. [Install Python 3.10+](https://www.python.org/downloads/) (check **"Add to PATH"**)
+2. Clone or download this repo
+3. Double-click **`setup.bat`**
+
+That's it. The setup script creates the virtual environment, installs dependencies, and optionally creates a desktop shortcut.
+
+On first run, the Whisper model (~75 MB for `tiny`) will download automatically. After that, no internet is needed.
+
+### Manual Installation
+
+<details>
+<summary>Click to expand manual steps</summary>
+
+#### 1. Install Python
 
 Download Python from [python.org](https://www.python.org/downloads/) and run the installer.
 
 > **Important:** Check the box that says **"Add Python to PATH"** during installation.
 
-### 2. Clone this repo
+#### 2. Clone this repo
 
 ```bash
 git clone https://github.com/fpresta0607/SIQspeak.git
@@ -37,33 +52,33 @@ cd SIQspeak
 
 Or download and extract the ZIP from the GitHub releases page.
 
-### 3. Create a virtual environment
+#### 3. Create a virtual environment
 
 ```bash
 python -m venv .venv
 ```
 
-### 4. Activate the virtual environment
+#### 4. Activate the virtual environment
 
 ```bash
 .venv\Scripts\activate
 ```
 
-### 5. Install dependencies
+#### 5. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 6. Run
+#### 6. Run
 
 ```bash
 python dictate.py
 ```
 
-On first run, the Whisper model (~75 MB for `tiny`) will download automatically. After that, no internet is needed.
-
 A system tray icon will appear — you're ready to dictate.
+
+</details>
 
 ## Usage
 

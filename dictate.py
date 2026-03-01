@@ -572,8 +572,10 @@ def _render_log_panel() -> tuple[np.ndarray, int, int]:
     if not entries:
         entries = [{"text": "No transcriptions yet", "timestamp": "", "time_epoch": 0}]
 
+    # Help text header height
+    help_h = 44
     row_count = len(entries)
-    panel_h = LOG_PANEL_PADDING * 2 + row_count * LOG_PANEL_ROW_H
+    panel_h = help_h + LOG_PANEL_PADDING * 2 + row_count * LOG_PANEL_ROW_H
     panel_w = LOG_PANEL_W
 
     img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
@@ -593,8 +595,14 @@ def _render_log_panel() -> tuple[np.ndarray, int, int]:
         font = ImageFont.load_default()
         font_small = font
 
+    # Help instructions at the top
+    draw.text((10, 6), "Hold Ctrl+Shift+Space to dictate", fill=(*GRAY, 180), font=font_small)
+    draw.text((10, 22), "Release to transcribe and paste", fill=(*GRAY, 180), font=font_small)
+    # Divider below help text
+    draw.line([(8, help_h - 4), (panel_w - 8, help_h - 4)], fill=(GRAY[0], GRAY[1], GRAY[2], 50))
+
     for idx, entry in enumerate(entries):
-        y = LOG_PANEL_PADDING + idx * LOG_PANEL_ROW_H
+        y = help_h + LOG_PANEL_PADDING + idx * LOG_PANEL_ROW_H
 
         # Timestamp
         ts = entry.get("timestamp", "")
@@ -1002,8 +1010,8 @@ def _handle_copy_click() -> None:
     if rx < copy_x or rx > copy_x + 24:
         return
 
-    # Determine which row
-    row = (ry - LOG_PANEL_PADDING) // LOG_PANEL_ROW_H
+    # Determine which row (44px help header + padding)
+    row = (ry - 44 - LOG_PANEL_PADDING) // LOG_PANEL_ROW_H
     entries = list(reversed(_transcription_log[-LOG_PANEL_MAX_VISIBLE:]))
     if 0 <= row < len(entries):
         text = entries[row].get("text", "")
