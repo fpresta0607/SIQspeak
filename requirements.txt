@@ -1,0 +1,5 @@
+faster-whisper
+sounddevice
+numpy
+pystray
+pillow
