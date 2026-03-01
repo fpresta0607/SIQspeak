@@ -31,7 +31,7 @@ Download Python from [python.org](https://www.python.org/downloads/) and run the
 ### 2. Clone this repo
 
 ```bash
-git clone https://github.com/SIQstack/SIQspeak.git
+git clone https://github.com/fpresta0607/SIQspeak.git
 cd SIQspeak
 ```
 
