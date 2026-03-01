@@ -1,3 +1,5 @@
+# Legacy requirements file — canonical deps are in pyproject.toml.
+# Use: pip install -e ".[dev]"
 faster-whisper
 sounddevice
 numpy

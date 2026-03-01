@@ -67,13 +67,13 @@ python -m venv .venv
 #### 5. Install dependencies
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
 #### 6. Run
 
 ```bash
-python dictate.py
+python -m siqspeak
 ```
 
 A system tray icon will appear — you're ready to dictate.
@@ -105,14 +105,14 @@ To launch SIQspeak automatically when Windows starts:
 2. Create a shortcut in that folder with this target:
 
 ```
-C:\path\to\SIQspeak\.venv\Scripts\pythonw.exe C:\path\to\SIQspeak\dictate.py
+C:\path\to\SIQspeak\.venv\Scripts\pythonw.exe -m siqspeak
 ```
 
 Using `pythonw.exe` (note the `w`) runs the app without a console window.
 
 ## Configuration
 
-All settings are at the top of `dictate.py`:
+Settings are managed via the overlay UI. Constants live in `src/siqspeak/config.py`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -133,7 +133,7 @@ Larger models are more accurate but slower. The `tiny` model works well for Engl
 ## Troubleshooting
 
 ### "Failed to register hotkey" on startup
-Another application is using `Ctrl+Shift+Space`. Close the conflicting app or change the hotkey constants in `dictate.py`.
+Another application is using `Ctrl+Shift+Space`. Close the conflicting app or change the hotkey constants in `src/siqspeak/config.py`.
 
 ### No audio / transcription is empty
 - Check that your microphone is set as the default recording device in Windows Sound settings
@@ -147,15 +147,19 @@ Some applications (admin-elevated windows, certain games) may not accept simulat
 
 ## How It Works
 
-Single-file architecture. The app:
+The app is structured as a Python package (`src/siqspeak/`):
 
 1. Loads the Whisper model into memory at startup
 2. Registers a global hotkey via the Win32 API
 3. On hotkey press: opens the microphone and records audio chunks
-4. On hotkey release: concatenates audio, runs Whisper inference on CPU
+4. On hotkey release: concatenates audio, runs Whisper inference
 5. Restores focus to the original window and types the text via Unicode keyboard events
 
 No clipboard is used for pasting — text is injected directly as keystrokes.
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, code quality tools, and PR guidelines.
 
 ## License
 
