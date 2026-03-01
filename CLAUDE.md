@@ -40,7 +40,7 @@ src/siqspeak/
   __init__.py              # __version__, __app_name__
   __main__.py              # python -m siqspeak entry
   app.py                   # main() + message_loop() — orchestrator
-  config.py                # constants, paths, colors, dimensions, config persistence
+  config.py                # constants, paths, colors, dimensions, config persistence, device_settings(), save_state_config()
   state.py                 # AppState dataclass — all mutable state (~100 fields)
   logging_setup.py         # configure_logging()
   hotkey.py                # on_hotkey_down(), _wait_for_release(), quit_app()
@@ -109,7 +109,7 @@ When enabled, silence detection (~0.7s) dispatches audio to `_transcription_work
 
 ## Configuration
 
-Settings persist to `config.json` (gitignored). Auto-detects GPU on first launch.
+Settings persist to `config.json` (gitignored). Auto-detects GPU on first launch. `setup.bat` auto-detects NVIDIA GPU via `nvidia-smi` and installs CUDA runtime packages; app validates CUDA at model load with silent CPU fallback.
 
 **Persisted:** model name, stream mode, pill position, device (cuda/cpu), mic device index.
 
@@ -128,6 +128,7 @@ Settings persist to `config.json` (gitignored). Auto-detects GPU on first launch
 Canonical source: `pyproject.toml`. Legacy `requirements.txt` kept for backward compat.
 
 Runtime: `faster-whisper`, `sounddevice`, `numpy`, `pystray`, `pillow`, `pyperclip`
+GPU (optional): `nvidia-cublas-cu12`, `nvidia-cudnn-cu12` — auto-installed by `setup.bat` if NVIDIA GPU detected
 Dev: `ruff`, `pyright`, `pytest`, `pytest-cov`
 
 ## Logging
