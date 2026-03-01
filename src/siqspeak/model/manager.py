@@ -6,7 +6,7 @@ import time
 
 from faster_whisper import WhisperModel
 
-from siqspeak.config import MODEL_SIZES_MB, save_config
+from siqspeak.config import MODEL_SIZES_MB, device_settings, save_state_config
 from siqspeak.state import AppState
 
 log = logging.getLogger("siqspeak")
@@ -60,18 +60,6 @@ class _DownloadProgress:
         self.close()
 
 
-def _save_state_config(state: AppState) -> None:
-    """Persist current state values to config.json."""
-    save_config({
-        "model": state.loaded_model_name,
-        "stream_mode": state.stream_mode,
-        "pill_x": state.pill_user_x,
-        "pill_y": state.pill_user_y,
-        "device": state.device,
-        "mic_device": state.mic_device,
-    })
-
-
 def _start_model_load(state: AppState, name: str) -> None:
     """Spawn a background thread to load a new Whisper model."""
     if state.model_loading:
@@ -90,18 +78,17 @@ def _start_model_load(state: AppState, name: str) -> None:
                 list(new_model.transcribe(_silence, beam_size=1)[0])
             state.model = new_model
             state.loaded_model_name = name
-            _save_state_config(state)
+            save_state_config(state)
             log.info("Model loaded: %s on %s", name, state.device)
         except Exception:
             if state.device == "cuda":
                 log.warning("CUDA unavailable, falling back to CPU")
-                state.device = "cpu"
-                state.compute_type = "int8"
+                state.device, state.compute_type = device_settings(False)
                 try:
-                    new_model = WhisperModel(name, device="cpu", compute_type="int8")
+                    new_model = WhisperModel(name, device=state.device, compute_type=state.compute_type)
                     state.model = new_model
                     state.loaded_model_name = name
-                    _save_state_config(state)
+                    save_state_config(state)
                     log.info("Model loaded: %s on cpu (CUDA fallback)", name)
                 except Exception:
                     log.exception("Failed to load model %s", name)
@@ -156,7 +143,7 @@ def _start_model_download_and_load(state: AppState, name: str) -> None:
             new_model = WhisperModel(model_path, device=state.device, compute_type=state.compute_type)
             state.model = new_model
             state.loaded_model_name = name
-            _save_state_config(state)
+            save_state_config(state)
             log.info("Model loaded: %s on %s", name, state.device)
         except Exception:
             state.download_error = "Download failed"

@@ -1,11 +1,17 @@
+from __future__ import annotations
+
 import base64
 import ctypes
 import io
 import json
 import logging
 import os
+from typing import TYPE_CHECKING
 
 from PIL import Image
+
+if TYPE_CHECKING:
+    from siqspeak.state import AppState
 
 log = logging.getLogger("siqspeak")
 
@@ -216,3 +222,20 @@ def save_config(values: dict) -> None:
             json.dump(values, f, indent=2)
     except OSError:
         log.exception("Failed to save config")
+
+
+def device_settings(use_cuda: bool) -> tuple[str, str]:
+    """Return (device, compute_type) for CUDA or CPU."""
+    return ("cuda", "float16") if use_cuda else ("cpu", "int8")
+
+
+def save_state_config(state: AppState) -> None:
+    """Persist current state values to config.json."""
+    save_config({
+        "model": state.loaded_model_name,
+        "stream_mode": state.stream_mode,
+        "pill_x": state.pill_user_x,
+        "pill_y": state.pill_user_y,
+        "device": state.device,
+        "mic_device": state.mic_device,
+    })

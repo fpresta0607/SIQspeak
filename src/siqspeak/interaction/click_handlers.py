@@ -14,7 +14,8 @@ from siqspeak.config import (
     MODEL_PANEL_HEADER_H,
     MODEL_PANEL_ROW_H,
     SETTINGS_HEADER_H,
-    save_config,
+    device_settings,
+    save_state_config,
 )
 from siqspeak.interaction.hover import _is_cursor_over_hwnd
 from siqspeak.overlay.pill import _pill_screen_rect
@@ -47,14 +48,7 @@ def _handle_idle_pill_click(state: AppState) -> None:
             px, py, _, _ = _pill_screen_rect(state)
             state.pill_user_x = px
             state.pill_user_y = py
-            save_config({
-                "model": state.loaded_model_name,
-                "stream_mode": state.stream_mode,
-                "pill_x": state.pill_user_x,
-                "pill_y": state.pill_user_y,
-                "device": state.device,
-                "mic_device": state.mic_device,
-            })
+            save_state_config(state)
             state.drag_active = False
             state.drag_pending = False
             state.idle_click_debounce = True
@@ -219,16 +213,6 @@ def _handle_settings_click(state: AppState) -> None:
     if ry < SETTINGS_HEADER_H:
         return
 
-    def _save() -> None:
-        save_config({
-            "model": state.loaded_model_name,
-            "stream_mode": state.stream_mode,
-            "pill_x": state.pill_user_x,
-            "pill_y": state.pill_user_y,
-            "device": state.device,
-            "mic_device": state.mic_device,
-        })
-
     def _rerender() -> None:
         buf, pw, ph = _render_settings_panel(state)
         _show_panel_window(state, state.settings_panel_hwnd, buf, pw, ph)
@@ -254,16 +238,13 @@ def _handle_settings_click(state: AppState) -> None:
     if stream_top <= ry < stream_bottom:
         state.stream_mode = not state.stream_mode
         log.info("STREAM_MODE toggled to %s", state.stream_mode)
-        _save()
+        save_state_config(state)
         _rerender()
     # --- GPU toggle ---
     elif state.has_cuda and gpu_top <= ry < gpu_bottom:
-        if state.device == "cuda":
-            state.device, state.compute_type = "cpu", "int8"
-        else:
-            state.device, state.compute_type = "cuda", "float16"
+        state.device, state.compute_type = device_settings(state.device != "cuda")
         log.info("GPU toggled: device=%s, compute_type=%s", state.device, state.compute_type)
-        _save()
+        save_state_config(state)
         _rerender()
         _start_model_load(state, state.loaded_model_name)
     # --- Mic header row: toggle dropdown ---
@@ -278,7 +259,7 @@ def _handle_settings_click(state: AppState) -> None:
             state.mic_device = dev["index"]
             state.mic_expanded = False
             log.info("Mic changed to device %d: %s", dev["index"], dev["name"])
-            _save()
+            save_state_config(state)
             _rerender()
     # --- Quit button ---
     elif ry >= quit_top:

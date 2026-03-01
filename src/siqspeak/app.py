@@ -28,9 +28,11 @@ from siqspeak.config import (
     WM_HOTKEY,
     WM_TIMER,
     _load_config,
+    device_settings,
 )
 from siqspeak.hotkey import on_hotkey_down, quit_app
 from siqspeak.interaction.click_handlers import (
+    _get_idle_icon_zone,
     _handle_idle_pill_click,
     _handle_model_click,
     _handle_settings_click,
@@ -58,17 +60,6 @@ from siqspeak.win32.window import (
 )
 
 log = logging.getLogger("siqspeak")
-
-
-def _get_idle_icon_zone(cursor_x: int, pill_left: int) -> int | None:
-    """Map cursor X to icon zone 0 (info), 1 (model), 2 (settings), or None."""
-    from siqspeak.config import IDLE_ICON_ZONE_W
-
-    rx = cursor_x - pill_left
-    if rx < 0 or rx >= IDLE_W:
-        return None
-    zone = rx // IDLE_ICON_ZONE_W
-    return min(zone, 2)
 
 
 def message_loop(state: AppState) -> None:
@@ -272,13 +263,11 @@ def main() -> None:
     state.has_cuda = ctranslate2.get_cuda_device_count() > 0
     saved_device = cfg.get("device")
     if saved_device == "cuda" and state.has_cuda:
-        state.device, state.compute_type = "cuda", "float16"
+        state.device, state.compute_type = device_settings(True)
     elif saved_device == "cpu":
-        state.device, state.compute_type = "cpu", "int8"
-    elif state.has_cuda:
-        state.device, state.compute_type = "cuda", "float16"
+        state.device, state.compute_type = device_settings(False)
     else:
-        state.device, state.compute_type = "cpu", "int8"
+        state.device, state.compute_type = device_settings(state.has_cuda)
     log.info("Device: %s (%s), CUDA available: %s", state.device, state.compute_type, state.has_cuda)
 
     # Cache available microphones
@@ -297,8 +286,8 @@ def main() -> None:
     except Exception:
         if state.device == "cuda":
             log.warning("GPU load failed, falling back to CPU")
-            state.device, state.compute_type = "cpu", "int8"
-            state.model = WhisperModel(model_name, device="cpu", compute_type="int8")
+            state.device, state.compute_type = device_settings(False)
+            state.model = WhisperModel(model_name, device=state.device, compute_type=state.compute_type)
         else:
             log.exception("Failed to load Whisper model")
             sys.exit(1)
