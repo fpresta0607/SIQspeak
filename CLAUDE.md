@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Whisper Dictation — a single-file Windows desktop app that provides local speech-to-text via OpenAI's Whisper model. Runs in the system tray; hold Ctrl+Shift+Space to record, release to transcribe and auto-paste into the active window.
+SIQspeak — a single-file Windows desktop app that provides local speech-to-text via OpenAI's Whisper model. Runs in the system tray; hold Ctrl+Shift+Space to record, release to transcribe and auto-type into the active window.
 
 ## Running
 
@@ -20,30 +20,34 @@ There is no build step, test suite, or linter configured. The app is a single `d
 
 ## Architecture
 
-Single-file monolith (`dictate.py`, ~350 lines). No modules, no packages.
+Single-file (`dictate.py`, ~900 lines). No modules, no packages.
 
-**Flow:** `main()` loads model → starts pystray in background thread → runs unified Win32 message loop on main thread (handles both hotkey and overlay animation).
+**Flow:** `main()` loads model → starts pystray in background thread → runs unified Win32 message loop on main thread (handles hotkey, overlay animation, and hover/click events).
 
 **Hotkey cycle (hold-to-record):**
-1. Hold Ctrl+Shift+Space → `RegisterHotKey` fires `on_hotkey_down()` → `start_recording()` opens mic stream, saves `GetForegroundWindow()` as paste target, shimmer ring appears
-2. Release Space → `_wait_for_release()` polling thread detects key-up via `GetAsyncKeyState` → `stop_and_transcribe()` runs Whisper inference (ring turns blue), restores foreground window via `AttachThreadInput` + `SetForegroundWindow`, copies text to clipboard, simulates Ctrl+V paste, restores old clipboard, ring disappears
+1. Hold Ctrl+Shift+Space → `RegisterHotKey` fires `on_hotkey_down()` → `start_recording()` opens mic stream, saves `GetForegroundWindow()` as paste target, pill expands to active mode
+2. Release Space → `_wait_for_release()` polling thread detects key-up via `GetAsyncKeyState` → `stop_and_transcribe()` runs Whisper inference, restores foreground window via `AttachThreadInput` + `SetForegroundWindow`, types text via `SendInput` Unicode events, pill returns to idle
 
-**State management:** `set_state("idle" | "recording" | "transcribing")` drives both tray icon color and overlay visibility. Thread-safe via atomic global write (`_overlay_target_state`) under CPython GIL; main thread reads it each timer tick.
+**State management:** `set_state("idle" | "recording" | "transcribing")` drives both tray icon color and overlay mode. Thread-safe via atomic global write (`_overlay_target_state`) under CPython GIL; main thread reads it each timer tick.
 
-**Overlay:** Win32 layered window (`CreateWindowExW` with `WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`). Rendered via `UpdateLayeredWindow` with pre-multiplied alpha BGRA buffers from numpy. Anti-aliased ring with rotating shimmer highlight and soft outer glow. Animates at ~30fps via `SetTimer`. Never steals focus — shown via `SW_SHOWNA`.
+**Overlay (two modes):**
+- Idle: small 36x36 circle with "i" icon, hoverable — shows transcription history panel on hover
+- Active: 150x40 pill with audio-reactive dots, click-through (`WS_EX_TRANSPARENT`)
 
-**Color palette:** Matches dictate.ico — dark blue (20,40,80), cyan (0,200,220), gray (140,140,150), white (230,240,255). Recording = cyan ring with white shimmer. Transcribing = white ring with cyan shimmer.
+Rendered via `UpdateLayeredWindow` with pre-multiplied alpha BGRA buffers from numpy. Animates at ~30fps via `SetTimer`. Never steals focus — shown via `SW_SHOWNA`.
 
-**Threading model (2 threads):**
+**Log panel:** Appears on hover over idle pill. Shows recent transcriptions with timestamps and copy buttons. Uses `pyperclip` for clipboard. Auto-hides with 300ms grace period.
+
+**Color palette:** Dark blue (20,40,80), cyan (0,200,220), gray (140,140,150), white (230,240,255). Recording = cyan dots. Transcribing = white dots.
+
+**Threading model:**
 - Main thread: Win32 message loop (`GetMessageW`) handles `WM_HOTKEY` + `WM_TIMER`
 - Background daemon: pystray tray icon
 - Temporary daemon threads: `_wait_for_release()` polling, transcription
 
-**Paste targeting:** `start_recording()` saves `GetForegroundWindow()` → `_target_hwnd`. Before pasting, `focus_window()` uses `AttachThreadInput` trick to reliably restore focus to the target window.
+**Text input:** `type_text()` uses `SendInput` with `KEYEVENTF_UNICODE` to type directly into the focused window. No clipboard involved in the paste flow.
 
-**Error handling:** All critical paths (model loading, mic open, transcription, paste, focus restore) wrapped in try/except with `log.exception()`. `stop_and_transcribe()` has a `finally` block that always resets state to idle. `_hotkey_busy` flag prevents rapid-fire re-triggering.
-
-**Key globals:** `is_recording`, `audio_chunks`, `model`, `icon`, `mic_stream`, `_target_hwnd`, `_overlay_target_state`, `_overlay_hwnd`, `_hotkey_busy`, `_should_quit`.
+**Error handling:** All critical paths wrapped in try/except with `log.exception()`. `stop_and_transcribe()` has a `finally` block that always resets state to idle. `_hotkey_busy` flag prevents rapid-fire re-triggering.
 
 ## Configuration
 
@@ -56,7 +60,7 @@ All config is hardcoded at the top of `dictate.py`:
 
 ## Dependencies
 
-Managed via pip in `.venv`. Key packages: `faster-whisper`, `sounddevice`, `pyperclip`, `pystray`, `pillow`, `numpy`. No requirements.txt or pyproject.toml exists — install state lives only in the venv.
+Managed via pip in `.venv`. Listed in `requirements.txt`: `faster-whisper`, `sounddevice`, `numpy`, `pystray`, `pillow`, `pyperclip`.
 
 ## Logging
 

@@ -1,9 +1,8 @@
 """
-Whisper Dictation — hold Ctrl+Shift+Space to record, release to transcribe and paste.
+SIQspeak — hold Ctrl+Shift+Space to record, release to transcribe and paste.
 
-Double-click the desktop shortcut to launch. Runs silently in the system tray.
-Gray = idle, Cyan = recording, Blue = transcribing.
-Wispr-style floating pill with audio-reactive dots.
+Runs silently in the system tray. Gray = idle, Cyan = recording, Blue = transcribing.
+Floating pill with audio-reactive dots; hover for transcription history.
 """
 
 import ctypes
@@ -893,7 +892,7 @@ def main() -> None:
     log.info("Model ready in %.2fs", time.perf_counter() - t0)
 
     menu = Menu(MenuItem("Quit", quit_app))
-    icon = Icon("Whisper Dictate", make_icon("gray"), "Whisper Dictate", menu)
+    icon = Icon("SIQspeak", make_icon("gray"), "SIQspeak", menu)
 
     threading.Thread(target=icon.run, daemon=True).start()
     log.info("READY")

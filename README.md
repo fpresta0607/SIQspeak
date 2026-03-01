@@ -1,4 +1,4 @@
-# Whisper Dictation
+# SIQspeak
 
 Local speech-to-text for Windows. Hold a hotkey, speak, release — your words are typed into the active window. No cloud, no API keys, 100% private.
 
@@ -7,10 +7,11 @@ Powered by OpenAI's [Whisper](https://github.com/openai/whisper) model running l
 ## Features
 
 - **Hold-to-talk** — Hold `Ctrl+Shift+Space` to record, release to transcribe
-- **Auto-paste** — Transcribed text is typed directly into whatever window was active
+- **Auto-type** — Transcribed text is typed directly into whatever window was active
 - **100% local** — Whisper runs on your CPU, nothing leaves your machine
 - **System tray** — Runs quietly in the background, right-click to quit
-- **Visual overlay** — Animated floating pill shows recording/transcribing status
+- **Visual overlay** — Animated floating pill shows recording/transcribing status with audio-reactive dots
+- **Transcription history** — Hover the idle pill to see recent transcriptions, click to copy
 - **No API keys** — No accounts, no subscriptions, no internet required after setup
 
 ## Requirements
@@ -30,8 +31,8 @@ Download Python from [python.org](https://www.python.org/downloads/) and run the
 ### 2. Clone this repo
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/whisper-dictation.git
-cd whisper-dictation
+git clone https://github.com/SIQstack/SIQspeak.git
+cd SIQspeak
 ```
 
 Or download and extract the ZIP from the GitHub releases page.
@@ -68,9 +69,11 @@ A system tray icon will appear — you're ready to dictate.
 
 | Action | What happens |
 |--------|-------------|
-| **Hold** `Ctrl+Shift+Space` | Recording starts — overlay turns cyan |
-| **Release** `Ctrl+Shift+Space` | Recording stops, transcription begins — overlay turns white |
+| **Hold** `Ctrl+Shift+Space` | Recording starts — pill expands with cyan animated dots |
+| **Release** `Ctrl+Shift+Space` | Recording stops, transcription begins — dots turn white |
 | Transcription completes | Text is typed into the window that was active when you started recording |
+| **Hover** the idle pill | Shows transcription history panel |
+| **Click copy icon** in history | Copies that transcription to clipboard |
 | **Right-click** tray icon → Quit | Exit the app |
 
 ### Tray icon colors
@@ -81,13 +84,13 @@ A system tray icon will appear — you're ready to dictate.
 
 ## Run at Startup (Optional)
 
-To launch Whisper Dictation automatically when Windows starts:
+To launch SIQspeak automatically when Windows starts:
 
 1. Press `Win+R`, type `shell:startup`, press Enter
 2. Create a shortcut in that folder with this target:
 
 ```
-C:\path\to\whisper-dictation\.venv\Scripts\pythonw.exe C:\path\to\whisper-dictation\dictate.py
+C:\path\to\SIQspeak\.venv\Scripts\pythonw.exe C:\path\to\SIQspeak\dictate.py
 ```
 
 Using `pythonw.exe` (note the `w`) runs the app without a console window.
@@ -129,7 +132,7 @@ Some applications (admin-elevated windows, certain games) may not accept simulat
 
 ## How It Works
 
-Single-file architecture (~350 lines). The app:
+Single-file architecture. The app:
 
 1. Loads the Whisper model into memory at startup
 2. Registers a global hotkey via the Win32 API
@@ -137,7 +140,7 @@ Single-file architecture (~350 lines). The app:
 4. On hotkey release: concatenates audio, runs Whisper inference on CPU
 5. Restores focus to the original window and types the text via Unicode keyboard events
 
-No clipboard is used — text is injected directly as keystrokes.
+No clipboard is used for pasting — text is injected directly as keystrokes.
 
 ## License
 
