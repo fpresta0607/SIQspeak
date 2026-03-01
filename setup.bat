@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 title SIQspeak Setup
 echo.
 echo   ===========================
@@ -33,7 +33,7 @@ echo   [OK] Python %PYVER% found.
 if not exist ".venv\Scripts\python.exe" (
     echo   [..] Creating virtual environment...
     python -m venv .venv
-    if %errorlevel% neq 0 (
+    if !errorlevel! neq 0 (
         echo   [!] Failed to create virtual environment.
         pause
         exit /b 1
@@ -58,16 +58,41 @@ echo   [OK] Dependencies installed.
 echo.
 
 :: ------------------------------------------------------------------
-:: 4. Pre-download default model
+:: 4. GPU auto-detection and CUDA runtime
+:: ------------------------------------------------------------------
+set HAS_GPU=0
+nvidia-smi >nul 2>&1
+if !errorlevel! equ 0 (
+    echo   [OK] NVIDIA GPU detected. Installing CUDA runtime libraries...
+    echo        (nvidia-cublas-cu12 + nvidia-cudnn-cu12, ~600 MB^)
+    .venv\Scripts\pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
+    if !errorlevel! equ 0 (
+        set HAS_GPU=1
+        echo   [OK] GPU acceleration enabled.
+    ) else (
+        echo   [!] GPU libraries failed to install. App will use CPU.
+    )
+) else (
+    echo   [--] No NVIDIA GPU detected. Using CPU mode.
+)
+echo.
+
+:: ------------------------------------------------------------------
+:: 5. Pre-download default model
 :: ------------------------------------------------------------------
 echo   The default speech model (tiny, ~75 MB) will be downloaded
 echo   on first use if not already available.
 echo.
 set /p PREDOWNLOAD="   Download it now? (Y/N): "
 if /i "%PREDOWNLOAD%"=="Y" (
-    echo   [..] Downloading tiny model (~75 MB)...
-    .venv\Scripts\python.exe -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8')"
-    if %errorlevel% equ 0 (
+    if !HAS_GPU! equ 1 (
+        echo   [..] Downloading tiny model (~75 MB, GPU mode^)...
+        .venv\Scripts\python.exe -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cuda', compute_type='float16')"
+    ) else (
+        echo   [..] Downloading tiny model (~75 MB^)...
+        .venv\Scripts\python.exe -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8')"
+    )
+    if !errorlevel! equ 0 (
         echo   [OK] Model downloaded and ready.
     ) else (
         echo   [!] Download failed. The model will download on first use.
@@ -78,7 +103,7 @@ if /i "%PREDOWNLOAD%"=="Y" (
 echo.
 
 :: ------------------------------------------------------------------
-:: 5. Offer desktop shortcut
+:: 6. Offer desktop shortcut
 :: ------------------------------------------------------------------
 set /p SHORTCUT="   Create a desktop shortcut? (Y/N): "
 if /i "%SHORTCUT%"=="Y" (
@@ -92,7 +117,7 @@ if /i "%SHORTCUT%"=="Y" (
          $sc.IconLocation = (Resolve-Path 'dictate.ico').Path + ',0'; ^
          $sc.Description = 'SIQspeak — local speech-to-text'; ^
          $sc.Save()"
-    if %errorlevel% equ 0 (
+    if !errorlevel! equ 0 (
         echo   [OK] Desktop shortcut created.
     ) else (
         echo   [!] Could not create shortcut. You can do it manually later.
@@ -103,7 +128,7 @@ if /i "%SHORTCUT%"=="Y" (
 echo.
 
 :: ------------------------------------------------------------------
-:: 6. Offer to run now
+:: 7. Offer to run now
 :: ------------------------------------------------------------------
 set /p RUNNOW="   Run SIQspeak now? (Y/N): "
 if /i "%RUNNOW%"=="Y" (
