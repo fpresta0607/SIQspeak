@@ -187,10 +187,10 @@ def _handle_model_click(state: AppState) -> None:
 
 
 def _handle_settings_click(state: AppState) -> None:
-    """Detect click on stream toggle, GPU toggle, mic selector, or Quit."""
+    """Detect click on stream toggle, GPU toggle, mic dropdown, or Quit."""
     from siqspeak.model.manager import _start_model_load
     from siqspeak.overlay.panels import _show_panel_window
-    from siqspeak.overlay.panels.settings_panel import _render_settings_panel
+    from siqspeak.overlay.panels.settings_panel import MIC_ROW_H, _render_settings_panel
 
     user32 = ctypes.windll.user32
 
@@ -213,20 +213,11 @@ def _handle_settings_click(state: AppState) -> None:
     user32.GetWindowRect(state.settings_panel_hwnd, ctypes.byref(rect))
     ry = pt.y - rect.top
 
-    # Row layout: header, then 44px rows (stream, gpu if available, mic), then quit
     row_h = 44
-    row_start = SETTINGS_HEADER_H + 8  # first row top
-    row_idx = (ry - row_start) // row_h if ry >= row_start else -1
+    row_start = SETTINGS_HEADER_H + 8
 
     if ry < SETTINGS_HEADER_H:
-        return  # clicked header area
-
-    # Map row index to action based on whether GPU row is present
-    # Row 0 = stream, Row 1 = gpu (if has_cuda) else mic, Row 2 = mic (if has_cuda)
-    stream_row = 0
-    gpu_row = 1 if state.has_cuda else -1
-    mic_row = 2 if state.has_cuda else 1
-    quit_top = row_start + row_h * (3 if state.has_cuda else 2) + 12
+        return
 
     def _save() -> None:
         save_config({
@@ -238,45 +229,58 @@ def _handle_settings_click(state: AppState) -> None:
             "mic_device": state.mic_device,
         })
 
-    def _rerender_settings() -> None:
+    def _rerender() -> None:
         buf, pw, ph = _render_settings_panel(state)
         _show_panel_window(state, state.settings_panel_hwnd, buf, pw, ph)
 
-    if row_idx == stream_row and ry < row_start + row_h:
+    # Calculate zone boundaries
+    stream_top = row_start
+    stream_bottom = stream_top + row_h
+    gpu_top = stream_bottom if state.has_cuda else -1
+    gpu_bottom = gpu_top + row_h if state.has_cuda else -1
+    mic_top = gpu_bottom if state.has_cuda else stream_bottom
+    mic_bottom = mic_top + row_h
+
+    # Mic dropdown items (below mic header row when expanded)
+    mic_list_top = mic_bottom
+    if state.mic_expanded and state.mic_devices:
+        mic_list_bottom = mic_list_top + len(state.mic_devices) * MIC_ROW_H + 8
+    else:
+        mic_list_bottom = mic_list_top
+
+    quit_top = mic_list_bottom + 12
+
+    # --- Stream toggle ---
+    if stream_top <= ry < stream_bottom:
         state.stream_mode = not state.stream_mode
         log.info("STREAM_MODE toggled to %s", state.stream_mode)
         _save()
-        _rerender_settings()
-    elif state.has_cuda and row_idx == gpu_row and ry < row_start + row_h * 2:
+        _rerender()
+    # --- GPU toggle ---
+    elif state.has_cuda and gpu_top <= ry < gpu_bottom:
         if state.device == "cuda":
             state.device, state.compute_type = "cpu", "int8"
         else:
             state.device, state.compute_type = "cuda", "float16"
         log.info("GPU toggled: device=%s, compute_type=%s", state.device, state.compute_type)
         _save()
-        _rerender_settings()
+        _rerender()
         _start_model_load(state, state.loaded_model_name)
-    elif row_idx == mic_row and ry < row_start + row_h * (mic_row + 1):
-        if state.mic_devices:
-            if state.mic_device is None:
-                state.mic_device = state.mic_devices[0]["index"]
-            else:
-                cur_indices = [d["index"] for d in state.mic_devices]
-                try:
-                    pos = cur_indices.index(state.mic_device)
-                    state.mic_device = cur_indices[(pos + 1) % len(cur_indices)]
-                except ValueError:
-                    state.mic_device = cur_indices[0]
-            log.info(
-                "Mic changed to device %d: %s",
-                state.mic_device,
-                next(
-                    (d["name"] for d in state.mic_devices if d["index"] == state.mic_device),
-                    "?",
-                ),
-            )
+    # --- Mic header row: toggle dropdown ---
+    elif mic_top <= ry < mic_bottom:
+        state.mic_expanded = not state.mic_expanded
+        _rerender()
+    # --- Mic device list item ---
+    elif state.mic_expanded and mic_list_top <= ry < mic_list_bottom:
+        dev_idx = (ry - mic_list_top) // MIC_ROW_H
+        if 0 <= dev_idx < len(state.mic_devices):
+            dev = state.mic_devices[dev_idx]
+            state.mic_device = dev["index"]
+            state.mic_expanded = False
+            log.info("Mic changed to device %d: %s", dev["index"], dev["name"])
             _save()
-            _rerender_settings()
+            _rerender()
+    # --- Quit button ---
     elif ry >= quit_top:
         state.should_quit = True
         if state.icon:

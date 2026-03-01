@@ -34,6 +34,7 @@ class AppState:
     # Microphone
     mic_device: int | None = None
     mic_devices: list[dict] = field(default_factory=list)
+    mic_expanded: bool = False
 
     # Overlay
     overlay_hwnd: int | None = None

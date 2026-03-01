@@ -22,6 +22,8 @@ from siqspeak.state import AppState
 
 log = logging.getLogger("siqspeak")
 
+MIC_ROW_H = 32
+
 
 def _draw_toggle_pill(draw: ImageDraw.Draw, x: int, y: int, w: int, h: int,
                       is_on: bool, font_toggle) -> None:
@@ -39,30 +41,11 @@ def _draw_toggle_pill(draw: ImageDraw.Draw, x: int, y: int, w: int, h: int,
         draw.text((x + w - 30, y + 6), "OFF", font=font_toggle, fill=(*GRAY, 200))
 
 
-def _wrap_mic_name(mic_name: str, suffix: str, font, max_w: int) -> list[str]:
-    """Word-wrap mic device name, appending suffix to the last line."""
-    words = mic_name.split()
-    if not words:
-        return [mic_name + suffix]
-    lines: list[str] = []
-    current = words[0]
-    for word in words[1:]:
-        test = current + " " + word
-        if font.getlength(test + suffix) <= max_w:
-            current = test
-        else:
-            lines.append(current)
-            current = word
-    lines.append(current + suffix)
-    return lines
-
-
 def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
-    """Render settings panel with stream toggle, GPU toggle, mic selector, and Quit."""
+    """Render settings panel with stream toggle, GPU toggle, mic dropdown, and Quit."""
     panel_w = _settings_panel_width()
     row_h = 44
     quit_btn_h = 44
-    mic_line_h = 18
 
     try:
         font_title = ImageFont.truetype("seguisb.ttf", 22)
@@ -77,20 +60,24 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
         font_btn = font
         font_mic = font
 
-    # Resolve mic name and wrap lines before sizing the panel
+    # Resolve current mic name
     if state.mic_devices:
         if state.mic_device is not None:
             mic_name = next((d["name"] for d in state.mic_devices if d["index"] == state.mic_device), "Default")
         else:
-            mic_name = state.mic_devices[0]["name"] + " *"
+            mic_name = "Default"
     else:
         mic_name = "No devices"
-    mic_lines = _wrap_mic_name(mic_name, "  >", font_mic, panel_w - 40)
-    mic_row_h = max(row_h, 34 + len(mic_lines) * mic_line_h + 8)
 
-    # Calculate panel height with variable mic row
+    # Calculate mic section height
+    if state.mic_expanded and state.mic_devices:
+        mic_section_h = row_h + len(state.mic_devices) * MIC_ROW_H + 8
+    else:
+        mic_section_h = row_h
+
+    # Calculate panel height
     toggle_rows = 1 + (1 if state.has_cuda else 0)  # stream + gpu
-    panel_h = SETTINGS_HEADER_H + 8 + row_h * toggle_rows + mic_row_h + 12 + quit_btn_h + 20
+    panel_h = SETTINGS_HEADER_H + 8 + row_h * toggle_rows + mic_section_h + 12 + quit_btn_h + 20
 
     img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -120,15 +107,31 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
                           state.device == "cuda", font_toggle)
         cur_y += row_h
 
-    # --- Mic selector row (wraps long names) ---
+    # --- Mic selector row ---
+    chevron = "\u25BC" if state.mic_expanded else "\u25B6"
     draw.text((20, cur_y + 10), "Microphone", font=font, fill=(230, 240, 255, 220))
-    mic_text_y = cur_y + 34
-    for ml in mic_lines:
-        bbox = draw.textbbox((0, 0), ml, font=font_mic)
-        tw = bbox[2] - bbox[0]
-        draw.text((panel_w - tw - 20, mic_text_y), ml, font=font_mic, fill=(*CYAN, 200))
-        mic_text_y += mic_line_h
-    cur_y += mic_row_h
+    # Show current device name + chevron on the right
+    label = f"{mic_name}  {chevron}"
+    bbox = draw.textbbox((0, 0), label, font=font_mic)
+    tw = bbox[2] - bbox[0]
+    draw.text((panel_w - tw - 20, cur_y + 13), label, font=font_mic, fill=(*CYAN, 200))
+    cur_y += row_h
+
+    # --- Expanded mic device list ---
+    if state.mic_expanded and state.mic_devices:
+        for dev in state.mic_devices:
+            is_selected = dev["index"] == state.mic_device
+            # Highlight selected row
+            if is_selected:
+                draw.rounded_rectangle(
+                    [16, cur_y, panel_w - 16, cur_y + MIC_ROW_H],
+                    radius=6, fill=(*CYAN, 40),
+                )
+            name = dev["name"]
+            color = (*CYAN, 255) if is_selected else (*WHITE, 180)
+            draw.text((28, cur_y + 7), name, font=font_mic, fill=color)
+            cur_y += MIC_ROW_H
+        cur_y += 8
 
     # Quit button -- red rounded rect
     btn_y = cur_y + 12
@@ -157,3 +160,4 @@ def _hide_settings_panel(state: AppState) -> None:
     if state.settings_panel_hwnd and state.active_panel == "settings":
         ctypes.windll.user32.ShowWindow(state.settings_panel_hwnd, 0)
         state.active_panel = None
+        state.mic_expanded = False

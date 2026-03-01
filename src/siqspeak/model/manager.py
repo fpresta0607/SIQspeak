@@ -83,12 +83,30 @@ def _start_model_load(state: AppState, name: str) -> None:
     def _load():
         try:
             new_model = WhisperModel(name, device=state.device, compute_type=state.compute_type)
+            # Validate CUDA actually works by running minimal inference
+            if state.device == "cuda":
+                import numpy as np
+                _silence = np.zeros(16000, dtype=np.float32)
+                list(new_model.transcribe(_silence, beam_size=1)[0])
             state.model = new_model
             state.loaded_model_name = name
             _save_state_config(state)
             log.info("Model loaded: %s on %s", name, state.device)
         except Exception:
-            log.exception("Failed to load model %s", name)
+            if state.device == "cuda":
+                log.warning("CUDA unavailable, falling back to CPU")
+                state.device = "cpu"
+                state.compute_type = "int8"
+                try:
+                    new_model = WhisperModel(name, device="cpu", compute_type="int8")
+                    state.model = new_model
+                    state.loaded_model_name = name
+                    _save_state_config(state)
+                    log.info("Model loaded: %s on cpu (CUDA fallback)", name)
+                except Exception:
+                    log.exception("Failed to load model %s", name)
+            else:
+                log.exception("Failed to load model %s", name)
         finally:
             state.model_loading = False
 
