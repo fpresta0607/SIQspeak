@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 
@@ -225,7 +226,23 @@ def _stop_and_transcribe_batch(state: AppState) -> None:
             vad_parameters=dict(min_silence_duration_ms=500),
             no_speech_threshold=0.6,
         )
-        text = " ".join(seg.text.strip() for seg in segments).strip()
+        # Deduplicate words at VAD segment boundaries
+        seg_texts = [seg.text.strip() for seg in segments if seg.text.strip()]
+        if len(seg_texts) > 1:
+            def _norm(w: str) -> str:
+                return re.sub(r"[^a-z0-9]", "", w.lower())
+            deduped = [seg_texts[0]]
+            for seg_text in seg_texts[1:]:
+                prev_words = deduped[-1].split()
+                next_words = seg_text.split()
+                if (prev_words and next_words
+                        and _norm(prev_words[-1]) == _norm(next_words[0])):
+                    deduped.append(" ".join(next_words[1:]))
+                else:
+                    deduped.append(seg_text)
+            text = " ".join(t for t in deduped if t).strip()
+        else:
+            text = " ".join(seg_texts).strip()
         elapsed = time.perf_counter() - t0
         log.info("TRANSCRIBE %.3fs -> %s", elapsed, text)
 

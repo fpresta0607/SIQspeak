@@ -14,7 +14,6 @@ from siqspeak.config import (
     LOG_COPY_BTN_W,
     LOG_HEADER_H,
     LOG_LINE_H,
-    LOG_PANEL_BG_ALPHA,
     LOG_PANEL_MAX_VISIBLE,
     LOG_PANEL_PADDING,
     LOG_TEXT_LEFT,
@@ -94,7 +93,7 @@ def _render_log_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     draw.rounded_rectangle(
         [0, 0, panel_w - 1, panel_h - 1],
         radius=14,
-        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(LOG_PANEL_BG_ALPHA * 255)),
+        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], 255),
     )
 
     draw.text((20, 14), "Transcription Log", fill=(*WHITE, 230), font=font_header)

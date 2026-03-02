@@ -83,7 +83,7 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     draw = ImageDraw.Draw(img)
     draw.rounded_rectangle(
         [0, 0, panel_w - 1, panel_h - 1], radius=14,
-        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.94 * 255)),
+        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], 255),
     )
 
     # Header

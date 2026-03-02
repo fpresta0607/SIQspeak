@@ -5,10 +5,13 @@ import re
 import time
 
 import numpy as np
+from faster_whisper import WhisperModel
 
 from siqspeak.config import (
     _HALLUCINATION_PATTERNS,
     OVERLAP_TAIL_WORDS,
+    device_settings,
+    save_state_config,
 )
 from siqspeak.state import AppState
 from siqspeak.win32.text_input import focus_window, type_text
@@ -98,12 +101,37 @@ def _transcription_worker(state: AppState) -> None:
                     state.stream_focus_done = True
 
                 try:
-                    type_text(text + " ")
+                    type_text(text + " ", release_modifiers=False)
                 except Exception:
                     log.exception("STREAM: type_text failed")
 
+        except RuntimeError as exc:
+            log.exception("STREAM: transcription RuntimeError")
+            exc_msg = str(exc).lower()
+            if "cublas" in exc_msg or "cuda" in exc_msg:
+                state.download_error = "GPU error — reloading on CPU"
+                state.download_error_time = time.time()
+                try:
+                    state.device, state.compute_type = device_settings(False)
+                    state.model = WhisperModel(
+                        state.loaded_model_name,
+                        device=state.device,
+                        compute_type=state.compute_type,
+                    )
+                    save_state_config(state)
+                    log.info("STREAM: reloaded model on CPU after CUDA error")
+                except Exception:
+                    log.exception("STREAM: CPU fallback failed")
+                    state.download_error = "Transcription failed"
+                    state.download_error_time = time.time()
+                    break
+            else:
+                state.download_error = "Transcription error"
+                state.download_error_time = time.time()
         except Exception:
             log.exception("STREAM: transcription error")
+            state.download_error = "Transcription error"
+            state.download_error_time = time.time()
         finally:
             if done_event:
                 done_event.set()

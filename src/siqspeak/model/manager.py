@@ -35,29 +35,59 @@ def _check_internet() -> bool:
         return False
 
 
-class _DownloadProgress:
-    """tqdm-compatible class that writes download progress to state."""
+def _make_progress_class(state: AppState):
+    """Build a tqdm-compatible class that reports download progress to state.
 
-    def __init__(self, *args, state: AppState | None = None, **kwargs):
-        self._state = state
-        self.total = kwargs.get("total", 0) or 0
-        self.n = 0
-        if self._state:
-            self._state.download_progress = 0.0
+    Returns a *class* (not an instance) because huggingface_hub's
+    ``snapshot_download`` passes ``tqdm_class`` to ``tqdm.contrib.concurrent.thread_map``
+    which calls ``tqdm_class.get_lock()`` — a plain function doesn't have that.
+    """
 
-    def update(self, n=1):
-        self.n += n
-        if self.total > 0 and self._state:
-            self._state.download_progress = min(self.n / self.total, 1.0)
+    class _Progress:
+        _lock = threading.Lock()
 
-    def close(self):
-        pass
+        @classmethod
+        def get_lock(cls):
+            return cls._lock
 
-    def __enter__(self):
-        return self
+        @classmethod
+        def set_lock(cls, lock):
+            cls._lock = lock
 
-    def __exit__(self, *args):
-        self.close()
+        def __init__(self, iterable=None, *args, **kwargs):
+            self._iterable = iterable
+            self.total = kwargs.get("total", 0) or 0
+            self.n = kwargs.get("initial", 0) or 0
+            state.download_progress = 0.0
+
+        def __iter__(self):
+            if self._iterable is None:
+                return
+            for obj in self._iterable:
+                yield obj
+                self.update(1)
+
+        def update(self, n=1):
+            self.n += n
+            if self.total > 0:
+                state.download_progress = min(self.n / self.total, 1.0)
+
+        def close(self):
+            pass
+
+        def refresh(self):
+            pass
+
+        def set_description(self, desc=None):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.close()
+
+    return _Progress
 
 
 def _start_model_load(state: AppState, name: str) -> None:
@@ -67,6 +97,8 @@ def _start_model_load(state: AppState, name: str) -> None:
     state.model_loading = True
     state.model_loading_name = name
     state.model_loading_start = time.time()
+    state.model_loading_is_download = False
+    state.model_hover_row = None
     log.info("Loading model: %s", name)
 
     def _load():
@@ -112,6 +144,8 @@ def _start_model_download_and_load(state: AppState, name: str) -> None:
     state.model_loading = True
     state.model_loading_name = name
     state.model_loading_start = time.time()
+    state.model_loading_is_download = True
+    state.model_hover_row = None
     state.download_progress = 0.0
     state.download_error = None
     log.info("Downloading model: %s (~%d MB)", name, MODEL_SIZES_MB.get(name, 0))
@@ -135,26 +169,41 @@ def _start_model_download_and_load(state: AppState, name: str) -> None:
                 "model.bin", "tokenizer.json", "vocabulary.*",
             ]
 
-            # Build a tqdm_class factory that passes state through
-            def _progress_factory(*args, **kwargs):
-                return _DownloadProgress(*args, state=state, **kwargs)
-
             model_path = huggingface_hub.snapshot_download(
                 repo_id, allow_patterns=allow_patterns,
-                tqdm_class=_progress_factory,
+                tqdm_class=_make_progress_class(state),
             )
             state.download_progress = 1.0
             log.info("Download complete: %s, loading...", name)
 
             new_model = WhisperModel(model_path, device=state.device, compute_type=state.compute_type)
+            # Validate CUDA inference (cuBLAS is only loaded at transcribe time)
+            if state.device == "cuda":
+                import numpy as np
+                _silence = np.zeros(16000, dtype=np.float32)
+                list(new_model.transcribe(_silence, beam_size=1)[0])
             state.model = new_model
             state.loaded_model_name = name
             save_state_config(state)
             log.info("Model loaded: %s on %s", name, state.device)
         except Exception:
-            state.download_error = "Download failed"
-            state.download_error_time = time.time()
-            log.exception("Failed to download/load model %s", name)
+            if state.device == "cuda":
+                log.warning("CUDA unavailable after download, falling back to CPU")
+                state.device, state.compute_type = device_settings(False)
+                try:
+                    new_model = WhisperModel(model_path, device=state.device, compute_type=state.compute_type)
+                    state.model = new_model
+                    state.loaded_model_name = name
+                    save_state_config(state)
+                    log.info("Model loaded: %s on cpu (CUDA fallback)", name)
+                except Exception:
+                    state.download_error = "Load failed"
+                    state.download_error_time = time.time()
+                    log.exception("Failed to load model %s after CPU fallback", name)
+            else:
+                state.download_error = "Download failed"
+                state.download_error_time = time.time()
+                log.exception("Failed to download/load model %s", name)
         finally:
             state.model_loading = False
 
