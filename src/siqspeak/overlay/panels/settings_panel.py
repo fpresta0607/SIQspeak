@@ -76,7 +76,7 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
         mic_section_h = row_h
 
     # Calculate panel height
-    toggle_rows = 1 + (1 if state.has_cuda else 0)  # stream + gpu
+    toggle_rows = 1 if state.has_cuda else 0  # gpu only
     panel_h = SETTINGS_HEADER_H + 8 + row_h * toggle_rows + mic_section_h + 12 + quit_btn_h + 20
 
     img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
@@ -93,12 +93,6 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
 
     cur_y = SETTINGS_HEADER_H + 8
     pill_w, pill_h = 56, 28
-
-    # --- Stream toggle row ---
-    draw.text((20, cur_y + 10), "Stream mode", font=font, fill=(230, 240, 255, 220))
-    _draw_toggle_pill(draw, panel_w - pill_w - 20, cur_y + 8, pill_w, pill_h,
-                      state.stream_mode, font_toggle)
-    cur_y += row_h
 
     # --- GPU toggle row (only if CUDA detected) ---
     if state.has_cuda:
@@ -125,7 +119,7 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
             if is_selected:
                 draw.rounded_rectangle(
                     [16, cur_y, panel_w - 16, cur_y + MIC_ROW_H],
-                    radius=6, fill=(*CYAN, 40),
+                    radius=6, fill=(20, 35, 50, 255),
                 )
             name = dev["name"]
             color = (*CYAN, 255) if is_selected else (*WHITE, 180)
