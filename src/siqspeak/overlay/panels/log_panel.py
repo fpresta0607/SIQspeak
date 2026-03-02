@@ -138,14 +138,14 @@ def _render_log_panel(state: AppState) -> tuple[np.ndarray, int, int]:
             if is_just_copied:
                 draw.rounded_rectangle(
                     [copy_x, btn_cy - btn_hh, copy_x + btn_hw * 2, btn_cy + btn_hh],
-                    radius=6, fill=(40, 180, 80, 100),
+                    radius=6, fill=(25, 50, 35, 255),
                 )
                 _draw_centered_text(draw, "\u2713", copy_x + btn_hw, btn_cy,
                                     font_check, (40, 220, 80, 255))
             elif is_hover:
                 draw.rounded_rectangle(
                     [copy_x, btn_cy - btn_hh, copy_x + btn_hw * 2, btn_cy + btn_hh],
-                    radius=6, fill=(*CYAN, 90),
+                    radius=6, fill=(20, 35, 50, 255),
                 )
                 draw.rectangle([copy_x + 9, btn_cy - 11, copy_x + 21, btn_cy + 6],
                                 outline=(*CYAN, 255), width=2)

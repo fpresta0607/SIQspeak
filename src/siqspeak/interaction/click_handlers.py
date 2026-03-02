@@ -218,11 +218,9 @@ def _handle_settings_click(state: AppState) -> None:
         _show_panel_window(state, state.settings_panel_hwnd, buf, pw, ph)
 
     # Calculate zone boundaries
-    stream_top = row_start
-    stream_bottom = stream_top + row_h
-    gpu_top = stream_bottom if state.has_cuda else -1
+    gpu_top = row_start if state.has_cuda else -1
     gpu_bottom = gpu_top + row_h if state.has_cuda else -1
-    mic_top = gpu_bottom if state.has_cuda else stream_bottom
+    mic_top = gpu_bottom if state.has_cuda else row_start
     mic_bottom = mic_top + row_h
 
     # Mic dropdown items (below mic header row when expanded)
@@ -234,14 +232,8 @@ def _handle_settings_click(state: AppState) -> None:
 
     quit_top = mic_list_bottom + 12
 
-    # --- Stream toggle ---
-    if stream_top <= ry < stream_bottom:
-        state.stream_mode = not state.stream_mode
-        log.info("STREAM_MODE toggled to %s", state.stream_mode)
-        save_state_config(state)
-        _rerender()
     # --- GPU toggle ---
-    elif state.has_cuda and gpu_top <= ry < gpu_bottom:
+    if state.has_cuda and gpu_top <= ry < gpu_bottom:
         state.device, state.compute_type = device_settings(state.device != "cuda")
         log.info("GPU toggled: device=%s, compute_type=%s", state.device, state.compute_type)
         save_state_config(state)

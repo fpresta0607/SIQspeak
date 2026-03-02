@@ -26,7 +26,6 @@ from siqspeak.config import (
     MODEL_PANEL_HEADER_H,
     MODEL_PANEL_ROW_H,
     SCRIPT_DIR,
-    STREAM_MODE,
     VK_SPACE,
     WM_HOTKEY,
     WM_TIMER,
@@ -278,7 +277,7 @@ def main() -> None:
     # Load persisted config
     cfg = _load_config()
     state.loaded_model_name = cfg.get("model", MODEL_NAME)
-    state.stream_mode = cfg.get("stream_mode", STREAM_MODE)
+    state.stream_mode = False
     state.pill_user_x = cfg.get("pill_x")
     state.pill_user_y = cfg.get("pill_y")
     state.mic_device = cfg.get("mic_device")

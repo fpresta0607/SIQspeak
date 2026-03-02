@@ -94,7 +94,7 @@ def _build_idle_frame(hover_zone: int | None = None) -> np.ndarray:
         draw.rounded_rectangle(
             [zl, 3, zr, IDLE_H - 3],
             radius=8,
-            fill=(255, 255, 255, 25),
+            fill=(30, 38, 58, 255),
         )
 
     # Separator lines between zones

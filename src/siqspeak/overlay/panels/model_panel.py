@@ -135,7 +135,7 @@ def _render_model_panel(state: AppState) -> tuple[np.ndarray, int, int]:
         elif is_confirming:
             draw.rounded_rectangle(
                 [4, y + 2, panel_w - 4, y + MODEL_PANEL_ROW_H - 2],
-                radius=8, fill=(*CYAN, 20))
+                radius=8, fill=(20, 30, 48, 255))
             draw.text((54, y + 10), name, fill=(*CYAN, 255), font=font)
             confirm_text = f"Download ~{size_mb} MB?"
             draw.text((54, y + 32), confirm_text,
