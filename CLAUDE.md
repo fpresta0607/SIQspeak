@@ -90,7 +90,7 @@ Root `dictate.py` is a 3-line shim for backward compatibility with existing shor
 Rendered via `UpdateLayeredWindow` with pre-multiplied alpha BGRA buffers from numpy. Animates at ~30fps via `SetTimer`.
 
 **Panels (click-activated, one at a time):**
-All panels share consistent styling: 14px corner radius, 0.94 alpha background, header + separator, 20px padding. Screen-adaptive dimensions via `GetSystemMetrics`.
+All panels share consistent styling: 14px corner radius, opaque background, header + separator, 20px padding. Screen-adaptive dimensions via `GetSystemMetrics`.
 
 - **Log panel:** Recent transcriptions with timestamps and copy buttons. Persisted to `transcriptions.jsonl`. Mouse wheel scroll via `WH_MOUSE_LL` hook.
 - **Model selector:** Cached models load on click. Uncached models require two-click confirmation with progress bar.
