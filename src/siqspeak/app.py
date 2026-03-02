@@ -16,12 +16,15 @@ from siqspeak.audio.recording import _load_log
 from siqspeak.config import (
     ACTIVE_H,
     ACTIVE_W,
+    AVAILABLE_MODELS,
     HOTKEY_ID,
     HOTKEY_MOD,
     IDLE_H,
     IDLE_W,
     LOG_PANEL_MAX_VISIBLE,
     MODEL_NAME,
+    MODEL_PANEL_HEADER_H,
+    MODEL_PANEL_ROW_H,
     SCRIPT_DIR,
     STREAM_MODE,
     VK_SPACE,
@@ -187,6 +190,23 @@ def message_loop(state: AppState) -> None:
 
                 elif state.active_panel == "model":
                     _handle_model_click(state)
+                    # Hover tracking for model rows
+                    if state.model_panel_hwnd and _is_cursor_over_hwnd(state.model_panel_hwnd):
+                        pt = ctypes.wintypes.POINT()
+                        user32.GetCursorPos(ctypes.byref(pt))
+                        rect = ctypes.wintypes.RECT()
+                        user32.GetWindowRect(state.model_panel_hwnd, ctypes.byref(rect))
+                        ry = pt.y - rect.top - MODEL_PANEL_HEADER_H
+                        row = ry // MODEL_PANEL_ROW_H
+                        hover = row if 0 <= row < len(AVAILABLE_MODELS) else None
+                    else:
+                        hover = None
+                    if hover != state.model_hover_row:
+                        state.model_hover_row = hover
+                        if not state.model_loading:
+                            from siqspeak.overlay.panels import _show_panel_window
+                            buf, pw, ph = _render_model_panel(state)
+                            _show_panel_window(state, state.model_panel_hwnd, buf, pw, ph)
                 elif state.active_panel == "settings":
                     _handle_settings_click(state)
 
@@ -202,6 +222,14 @@ def message_loop(state: AppState) -> None:
                             state.log_scroll_offset = max(0, min(
                                 state.log_scroll_offset + scroll_lines, max_offset))
                             _show_log_panel(state)
+
+                # Loading timeout safety: reset stuck model_loading after 60s
+                if (state.model_loading and state.model_loading_start > 0
+                        and time.time() - state.model_loading_start > 60.0):
+                        log.warning("Model load timed out after 60s")
+                        state.model_loading = False
+                        state.download_error = "Load timed out"
+                        state.download_error_time = time.time()
 
                 # Animate model panel during download / refresh after load
                 if state.model_loading:

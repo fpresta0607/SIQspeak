@@ -71,6 +71,14 @@ def _render_model_panel(state: AppState) -> tuple[np.ndarray, int, int]:
         is_cached = _is_model_cached(name) if not is_loaded else True
         size_mb = MODEL_SIZES_MB.get(name, 0)
 
+        # Hover highlight (skip for loaded/loading/confirming rows)
+        is_hovered = (idx == state.model_hover_row
+                      and not is_loaded and not is_this_loading and not is_confirming)
+        if is_hovered:
+            draw.rounded_rectangle(
+                [4, y + 2, panel_w - 4, y + MODEL_PANEL_ROW_H - 2],
+                radius=8, fill=(*WHITE, 12))
+
         # Vertically center text in row
         text_y = y + (MODEL_PANEL_ROW_H - 18) // 2
 

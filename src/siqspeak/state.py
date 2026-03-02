@@ -81,6 +81,12 @@ class AppState:
     model_click_debounce: bool = False
     settings_click_debounce: bool = False
 
+    # Model panel hover
+    model_hover_row: int | None = None
+
+    # Loading timeout
+    model_loading_start: float = 0.0
+
     # Streaming
     stream_mode: bool = False
     stream_queue: queue.Queue | None = None

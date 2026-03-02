@@ -66,6 +66,7 @@ def _start_model_load(state: AppState, name: str) -> None:
         return
     state.model_loading = True
     state.model_loading_name = name
+    state.model_loading_start = time.time()
     log.info("Loading model: %s", name)
 
     def _load():
@@ -97,7 +98,11 @@ def _start_model_load(state: AppState, name: str) -> None:
         finally:
             state.model_loading = False
 
-    threading.Thread(target=_load, daemon=True).start()
+    try:
+        threading.Thread(target=_load, daemon=True).start()
+    except Exception:
+        log.exception("Failed to start model load thread")
+        state.model_loading = False
 
 
 def _start_model_download_and_load(state: AppState, name: str) -> None:
@@ -106,6 +111,7 @@ def _start_model_download_and_load(state: AppState, name: str) -> None:
         return
     state.model_loading = True
     state.model_loading_name = name
+    state.model_loading_start = time.time()
     state.download_progress = 0.0
     state.download_error = None
     log.info("Downloading model: %s (~%d MB)", name, MODEL_SIZES_MB.get(name, 0))
@@ -152,4 +158,8 @@ def _start_model_download_and_load(state: AppState, name: str) -> None:
         finally:
             state.model_loading = False
 
-    threading.Thread(target=_download_and_load, daemon=True).start()
+    try:
+        threading.Thread(target=_download_and_load, daemon=True).start()
+    except Exception:
+        log.exception("Failed to start model download thread")
+        state.model_loading = False

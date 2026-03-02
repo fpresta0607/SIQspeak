@@ -59,11 +59,8 @@ def _transcription_worker(state: AppState) -> None:
                 audio,
                 beam_size=1,
                 language="en",
-                vad_filter=True,
-                vad_parameters=dict(
-                    min_speech_duration_ms=250,
-                    min_silence_duration_ms=500,
-                ),
+                temperature=0.0,
+                without_timestamps=True,
                 no_speech_threshold=0.6,
                 condition_on_previous_text=False,
                 suppress_blank=True,
