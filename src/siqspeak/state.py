@@ -86,6 +86,7 @@ class AppState:
 
     # Loading timeout
     model_loading_start: float = 0.0
+    model_loading_is_download: bool = False
 
     # Streaming
     stream_mode: bool = False

@@ -164,10 +164,14 @@ def _render_frame(state: AppState, current_state: str, phase: float) -> np.ndarr
             scale = 0.4 + dot_level * 2.2
             bright = 0.35 + dot_level * 0.65
             scale += 0.12 * math.sin(phase * 2.5 + i * 0.5)
+            # Vertical displacement: traveling sine wave scaled by audio level
+            amplitude = dot_level * 9.0
+            cy += amplitude * math.sin(phase * 2.5 + i * 0.9)
         else:
             wave = (math.sin(phase * 3.0 + i * 0.6) + 1) / 2
             scale = 0.5 + wave * 1.2
             bright = 0.35 + wave * 0.65
+            cy += 5.0 * math.sin(phase * 3.0 + i * 0.8)
 
         r = DOT_R * max(scale, 0.2)
 
@@ -185,7 +189,7 @@ def _render_frame(state: AppState, current_state: str, phase: float) -> np.ndarr
         dist = np.sqrt((gx - cx) ** 2 + (gy - cy) ** 2)
 
         dot_mask = np.clip(1.0 - (dist - r) / 1.2, 0, 1)
-        glow_mask = np.clip(1.0 - (dist - r * 1.3) / 3.0, 0, 1) * 0.2
+        glow_mask = np.clip(1.0 - (dist - r * 1.3) / 3.5, 0, 1) * 0.3
         combined = np.clip(dot_mask + glow_mask, 0, 1)
 
         src_alpha = combined * bright

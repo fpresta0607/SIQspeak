@@ -28,16 +28,7 @@ log = logging.getLogger("siqspeak")
 
 def _render_model_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     """Render the model selector panel with cache/download status."""
-    row_count = len(AVAILABLE_MODELS)
     panel_w = _model_panel_width()
-    panel_h = MODEL_PANEL_HEADER_H + row_count * MODEL_PANEL_ROW_H + 16
-
-    img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle(
-        [0, 0, panel_w - 1, panel_h - 1], radius=14,
-        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.94 * 255)),
-    )
 
     try:
         font_title = ImageFont.truetype("seguisb.ttf", 22)
@@ -50,43 +41,29 @@ def _render_model_panel(state: AppState) -> tuple[np.ndarray, int, int]:
         font_small = font
         font_check = font
 
-    # Header
-    draw.text((20, 12), "Models", fill=(*WHITE, 230), font=font_title)
-    draw.line([(20, MODEL_PANEL_HEADER_H - 4), (panel_w - 20, MODEL_PANEL_HEADER_H - 4)],
-              fill=(*GRAY, 50))
-
     ORANGE = (255, 160, 50)
 
-    for idx, name in enumerate(AVAILABLE_MODELS):
-        y = MODEL_PANEL_HEADER_H + idx * MODEL_PANEL_ROW_H
-        is_loaded = (name == state.loaded_model_name)
-        is_this_loading = (state.model_loading and name == state.model_loading_name)
-        is_downloading = (is_this_loading and state.download_progress < 1.0
-                          and state.download_progress > 0.0)
-        is_download_starting = (is_this_loading and state.download_progress == 0.0
-                                and not _is_model_cached(name))
-        is_confirming = (name == state.download_confirm_name and not state.model_loading)
-        has_error = (state.download_error and name == state.model_loading_name
-                     and not state.model_loading)
-        is_cached = _is_model_cached(name) if not is_loaded else True
-        size_mb = MODEL_SIZES_MB.get(name, 0)
+    # --- Loading view: compact panel with just the loading model ---
+    if state.model_loading:
+        panel_h = MODEL_PANEL_HEADER_H + MODEL_PANEL_ROW_H + 16
+        img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        draw.rounded_rectangle(
+            [0, 0, panel_w - 1, panel_h - 1], radius=14,
+            fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], 255),
+        )
+        draw.text((20, 12), "Models", fill=(*WHITE, 230), font=font_title)
+        draw.line([(20, MODEL_PANEL_HEADER_H - 4), (panel_w - 20, MODEL_PANEL_HEADER_H - 4)],
+                  fill=(*GRAY, 50))
 
-        # Hover highlight (skip for loaded/loading/confirming rows)
-        is_hovered = (idx == state.model_hover_row
-                      and not is_loaded and not is_this_loading and not is_confirming)
-        if is_hovered:
-            draw.rounded_rectangle(
-                [4, y + 2, panel_w - 4, y + MODEL_PANEL_ROW_H - 2],
-                radius=8, fill=(*WHITE, 12))
-
-        # Vertically center text in row
+        name = state.model_loading_name
+        y = MODEL_PANEL_HEADER_H
         text_y = y + (MODEL_PANEL_ROW_H - 18) // 2
+        is_downloading = (state.download_progress < 1.0 and state.download_progress > 0.0)
+        is_download_starting = (state.download_progress == 0.0
+                                and state.model_loading_is_download)
 
-        if has_error:
-            draw.text((54, text_y), name, fill=(*ORANGE, 240), font=font)
-            draw.text((panel_w - 20, text_y + 2), state.download_error,
-                      fill=(*ORANGE, 200), font=font_small, anchor="ra")
-        elif is_downloading or is_download_starting:
+        if is_downloading or is_download_starting:
             draw.text((54, text_y - 4), name, fill=(*CYAN, 220), font=font)
             if is_downloading:
                 pct_text = f"{int(state.download_progress * 100)}%"
@@ -105,13 +82,56 @@ def _render_model_panel(state: AppState) -> tuple[np.ndarray, int, int]:
                         [bar_x, bar_y, bar_x + fill_w, bar_y + bar_h],
                         radius=2, fill=(*CYAN, 200))
             else:
-                draw.text((panel_w - 20, text_y - 2), "connecting...",
+                draw.text((panel_w - 20, text_y - 2), "Connecting...",
                           fill=(*GRAY, 150), font=font_small, anchor="ra")
-        elif is_this_loading:
+        else:
             draw.text((20, text_y), "...", fill=(*CYAN, 200), font=font_small)
             draw.text((54, text_y), name, fill=(*CYAN, 220), font=font)
-            draw.text((panel_w - 20, text_y + 2), "loading...",
+            draw.text((panel_w - 20, text_y + 2), "Loading...",
                       fill=(*GRAY, 150), font=font_small, anchor="ra")
+
+        return _rgba_to_premul_bgra(img), panel_w, panel_h
+
+    # --- Normal view: full model list ---
+    row_count = len(AVAILABLE_MODELS)
+    panel_h = MODEL_PANEL_HEADER_H + row_count * MODEL_PANEL_ROW_H + 16
+
+    img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle(
+        [0, 0, panel_w - 1, panel_h - 1], radius=14,
+        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], 255),
+    )
+
+    # Header
+    draw.text((20, 12), "Models", fill=(*WHITE, 230), font=font_title)
+    draw.line([(20, MODEL_PANEL_HEADER_H - 4), (panel_w - 20, MODEL_PANEL_HEADER_H - 4)],
+              fill=(*GRAY, 50))
+
+    for idx, name in enumerate(AVAILABLE_MODELS):
+        y = MODEL_PANEL_HEADER_H + idx * MODEL_PANEL_ROW_H
+        is_loaded = (name == state.loaded_model_name)
+        is_confirming = (name == state.download_confirm_name and not state.model_loading)
+        has_error = (state.download_error and name == state.model_loading_name
+                     and not state.model_loading)
+        is_cached = _is_model_cached(name) if not is_loaded else True
+        size_mb = MODEL_SIZES_MB.get(name, 0)
+
+        # Hover highlight (skip for loaded/confirming rows)
+        is_hovered = (idx == state.model_hover_row
+                      and not is_loaded and not is_confirming)
+        if is_hovered:
+            draw.rounded_rectangle(
+                [4, y + 2, panel_w - 4, y + MODEL_PANEL_ROW_H - 2],
+                radius=8, fill=(30, 38, 58, 255))
+
+        # Vertically center text in row
+        text_y = y + (MODEL_PANEL_ROW_H - 18) // 2
+
+        if has_error:
+            draw.text((54, text_y), name, fill=(*ORANGE, 240), font=font)
+            draw.text((panel_w - 20, text_y + 2), state.download_error,
+                      fill=(*ORANGE, 200), font=font_small, anchor="ra")
         elif is_confirming:
             draw.rounded_rectangle(
                 [4, y + 2, panel_w - 4, y + MODEL_PANEL_ROW_H - 2],
@@ -127,7 +147,7 @@ def _render_model_panel(state: AppState) -> tuple[np.ndarray, int, int]:
             draw.text((54, text_y), name, fill=(*CYAN, 255), font=font)
         elif is_cached:
             draw.text((54, text_y), name, fill=(*WHITE, 220), font=font)
-            draw.text((panel_w - 20, text_y + 2), "ready",
+            draw.text((panel_w - 20, text_y + 2), "Ready",
                       fill=(*GRAY, 100), font=font_small, anchor="ra")
         else:
             draw.text((54, text_y), name, fill=(*WHITE, 180), font=font)

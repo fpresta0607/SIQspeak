@@ -190,20 +190,20 @@ def message_loop(state: AppState) -> None:
 
                 elif state.active_panel == "model":
                     _handle_model_click(state)
-                    # Hover tracking for model rows
-                    if state.model_panel_hwnd and _is_cursor_over_hwnd(state.model_panel_hwnd):
-                        pt = ctypes.wintypes.POINT()
-                        user32.GetCursorPos(ctypes.byref(pt))
-                        rect = ctypes.wintypes.RECT()
-                        user32.GetWindowRect(state.model_panel_hwnd, ctypes.byref(rect))
-                        ry = pt.y - rect.top - MODEL_PANEL_HEADER_H
-                        row = ry // MODEL_PANEL_ROW_H
-                        hover = row if 0 <= row < len(AVAILABLE_MODELS) else None
-                    else:
-                        hover = None
-                    if hover != state.model_hover_row:
-                        state.model_hover_row = hover
-                        if not state.model_loading:
+                    # Hover tracking for model rows (skip during loading)
+                    if not state.model_loading:
+                        if state.model_panel_hwnd and _is_cursor_over_hwnd(state.model_panel_hwnd):
+                            pt = ctypes.wintypes.POINT()
+                            user32.GetCursorPos(ctypes.byref(pt))
+                            rect = ctypes.wintypes.RECT()
+                            user32.GetWindowRect(state.model_panel_hwnd, ctypes.byref(rect))
+                            ry = pt.y - rect.top - MODEL_PANEL_HEADER_H
+                            row = ry // MODEL_PANEL_ROW_H
+                            hover = row if 0 <= row < len(AVAILABLE_MODELS) else None
+                        else:
+                            hover = None
+                        if hover != state.model_hover_row:
+                            state.model_hover_row = hover
                             from siqspeak.overlay.panels import _show_panel_window
                             buf, pw, ph = _render_model_panel(state)
                             _show_panel_window(state, state.model_panel_hwnd, buf, pw, ph)
@@ -311,6 +311,11 @@ def main() -> None:
     model_name = state.loaded_model_name
     try:
         state.model = WhisperModel(model_name, device=state.device, compute_type=state.compute_type)
+        # Validate CUDA actually works by running minimal inference
+        if state.device == "cuda":
+            import numpy as np
+            _silence = np.zeros(16000, dtype=np.float32)
+            list(state.model.transcribe(_silence, beam_size=1)[0])
     except Exception:
         if state.device == "cuda":
             log.warning("GPU load failed, falling back to CPU")
