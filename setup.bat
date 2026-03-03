@@ -124,14 +124,14 @@ echo.
 echo       STEP 1: Log in if prompted
 echo.
 echo       STEP 2: You will see a "Create a new token" form
-echo               - "Token name" will say SIQspeak -- leave it
-echo               - Under "Token type" select "Read"
+echo               - Type a name like "SIQspeak" in the Token name box
+echo               - Under Permissions, select "Read"
 echo                 That is all SIQspeak needs
 echo.
-echo       STEP 3: Click the blue "Create token" button at the bottom
+echo       STEP 3: Click the "Create token" button at the bottom
 echo.
 echo       STEP 4: Your new token appears -- it starts with hf_
-echo               Click the COPY ICON next to it to copy
+echo               Click the COPY button next to it
 echo.
 echo       STEP 5: Come back to this window and paste it below
 echo               Tip: right-click in this window to paste
