@@ -22,13 +22,133 @@ from siqspeak.model.manager import _is_model_cached
 from siqspeak.overlay.panels import _show_panel_window
 from siqspeak.overlay.rendering import _rgba_to_premul_bgra
 from siqspeak.state import AppState
+from siqspeak.hf_auth import has_token
 
 log = logging.getLogger("siqspeak")
+
+
+def _render_hf_auth_panel(state: AppState) -> tuple[np.ndarray, int, int]:
+    """Render the HuggingFace authentication dialog panel."""
+    panel_w = _model_panel_width()
+    panel_h = 280
+
+    try:
+        font_title = ImageFont.truetype("seguisb.ttf", 20)
+        font = ImageFont.truetype("seguisb.ttf", 16)
+        font_small = ImageFont.truetype("seguisb.ttf", 13)
+        font_icon = ImageFont.truetype("seguisb.ttf", 28)
+    except OSError:
+        font_title = ImageFont.load_default()
+        font = font_title
+        font_small = font
+        font_icon = font
+
+    ORANGE = (255, 160, 50)
+    GREEN = (80, 220, 120)
+
+    img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle(
+        [0, 0, panel_w - 1, panel_h - 1], radius=14,
+        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], 255),
+    )
+
+    # Success state — auto-dismiss after showing confirmation
+    if state.hf_auth_success:
+        import time
+        draw.text((panel_w // 2, 60), "\u2713", fill=(*GREEN, 255),
+                  font=font_icon, anchor="mm")
+        draw.text((panel_w // 2, 100), "Signed in!",
+                  fill=(*GREEN, 255), font=font_title, anchor="mm")
+        username = state.hf_username or "authenticated"
+        draw.text((panel_w // 2, 130), f"Welcome, {username}",
+                  fill=(*WHITE, 180), font=font, anchor="mm")
+        draw.text((panel_w // 2, 160), "Starting download...",
+                  fill=(*CYAN, 180), font=font_small, anchor="mm")
+        return _rgba_to_premul_bgra(img), panel_w, panel_h
+
+    # Verifying state
+    if state.hf_auth_verifying:
+        draw.text((panel_w // 2, 80), "...", fill=(*CYAN, 255),
+                  font=font_icon, anchor="mm")
+        draw.text((panel_w // 2, 120), "Verifying token...",
+                  fill=(*CYAN, 200), font=font, anchor="mm")
+        return _rgba_to_premul_bgra(img), panel_w, panel_h
+
+    # Header
+    y = 14
+    draw.text((20, y), "\U0001F511  Sign In Required", fill=(*WHITE, 240), font=font_title)
+    y += 32
+
+    draw.line([(20, y), (panel_w - 20, y)], fill=(*GRAY, 50))
+    y += 12
+
+    # Explanation
+    draw.text((20, y), "SIQspeak needs a free HuggingFace",
+              fill=(*WHITE, 180), font=font_small)
+    y += 18
+    draw.text((20, y), "account to download AI models.",
+              fill=(*WHITE, 180), font=font_small)
+    y += 28
+
+    # Steps
+    draw.text((20, y), "1.", fill=(*CYAN, 220), font=font)
+    draw.text((44, y), "Click below to open your browser",
+              fill=(*WHITE, 200), font=font_small)
+    y += 22
+    draw.text((20, y), "2.", fill=(*CYAN, 220), font=font)
+    draw.text((44, y), "Sign up or log in (free)",
+              fill=(*WHITE, 200), font=font_small)
+    y += 22
+    draw.text((20, y), "3.", fill=(*CYAN, 220), font=font)
+    draw.text((44, y), "Copy your access token",
+              fill=(*WHITE, 200), font=font_small)
+    y += 22
+    draw.text((20, y), "4.", fill=(*CYAN, 220), font=font)
+    draw.text((44, y), "Paste it here (click Paste & Verify)",
+              fill=(*WHITE, 200), font=font_small)
+    y += 30
+
+    # Buttons: [Open Browser]  [Paste & Verify]  [Cancel]
+    btn_y = y
+    # "Open Browser" button
+    draw.rounded_rectangle(
+        [20, btn_y, 140, btn_y + 30], radius=6,
+        fill=(*CYAN, 40), outline=(*CYAN, 120))
+    draw.text((80, btn_y + 15), "Open Browser",
+              fill=(*CYAN, 240), font=font_small, anchor="mm")
+
+    # "Paste & Verify" button
+    draw.rounded_rectangle(
+        [150, btn_y, 280, btn_y + 30], radius=6,
+        fill=(*CYAN, 40), outline=(*CYAN, 120))
+    draw.text((215, btn_y + 15), "Paste & Verify",
+              fill=(*CYAN, 240), font=font_small, anchor="mm")
+
+    # "Cancel" button
+    draw.rounded_rectangle(
+        [290, btn_y, 350, btn_y + 30], radius=6,
+        fill=(*GRAY, 20), outline=(*GRAY, 60))
+    draw.text((320, btn_y + 15), "Cancel",
+              fill=(*GRAY, 180), font=font_small, anchor="mm")
+
+    # Error message
+    if state.hf_auth_error:
+        import time
+        if time.time() - state.hf_auth_error_time < 5.0:
+            draw.text((20, btn_y + 38), state.hf_auth_error,
+                      fill=(*ORANGE, 220), font=font_small)
+
+    return _rgba_to_premul_bgra(img), panel_w, panel_h
 
 
 def _render_model_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     """Render the model selector panel with cache/download status."""
     panel_w = _model_panel_width()
+
+    # Show auth dialog if needed
+    if state.needs_hf_auth:
+        return _render_hf_auth_panel(state)
 
     try:
         font_title = ImageFont.truetype("seguisb.ttf", 22)

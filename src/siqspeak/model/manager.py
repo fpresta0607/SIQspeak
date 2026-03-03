@@ -8,6 +8,7 @@ from faster_whisper import WhisperModel
 
 from siqspeak._frozen import bundled_model_path
 from siqspeak.config import MODEL_SIZES_MB, device_settings, save_state_config
+from siqspeak.hf_auth import has_token, is_auth_error, validate_token
 from siqspeak.state import AppState
 
 log = logging.getLogger("siqspeak")
@@ -186,9 +187,37 @@ def _start_model_load(state: AppState, name: str) -> None:
 
 
 def _start_model_download_and_load(state: AppState, name: str) -> None:
-    """Download a model from HF Hub, then load it."""
+    """Download a model from HF Hub, then load it.
+
+    If no HuggingFace token is configured, sets ``state.needs_hf_auth``
+    so the UI can show the auth dialog.  After the user authenticates,
+    call ``_retry_download_after_auth(state)`` to resume.
+    """
     if state.model_loading:
         return
+
+    # Pre-check: do we have a valid HF token?
+    if not has_token():
+        log.info("No HF token found — requesting auth before download")
+        state.needs_hf_auth = True
+        state.hf_pending_model = name
+        return
+
+    _do_download_and_load(state, name)
+
+
+def _retry_download_after_auth(state: AppState) -> None:
+    """Resume a pending download after HF auth completes."""
+    name = state.hf_pending_model
+    if not name:
+        return
+    state.hf_pending_model = None
+    state.needs_hf_auth = False
+    _do_download_and_load(state, name)
+
+
+def _do_download_and_load(state: AppState, name: str) -> None:
+    """Internal: actually download and load a model (called after auth check)."""
     state.model_loading = True
     state.model_loading_name = name
     state.model_loading_start = time.time()
@@ -207,6 +236,7 @@ def _start_model_download_and_load(state: AppState, name: str) -> None:
             state.model_loading = False
             return
 
+        model_path = None
         try:
             import huggingface_hub
             from faster_whisper.utils import _MODELS
@@ -217,13 +247,21 @@ def _start_model_download_and_load(state: AppState, name: str) -> None:
                 "model.bin", "tokenizer.json", "vocabulary.*",
             ]
 
-            model_path = None
+            # Attempt 1: HuggingFace Hub (authenticated)
             try:
                 model_path = huggingface_hub.snapshot_download(
                     repo_id, allow_patterns=allow_patterns,
                     tqdm_class=_make_progress_class(state),
                 )
             except Exception as hub_err:
+                if is_auth_error(hub_err):
+                    # Token exists but is invalid/expired — re-trigger auth
+                    log.warning("HF auth error: %s — requesting re-auth", hub_err)
+                    state.needs_hf_auth = True
+                    state.hf_pending_model = name
+                    state.model_loading = False
+                    return
+                # Non-auth error: try direct download fallback
                 log.warning("HF Hub download failed (%s), trying direct download...", hub_err)
                 model_path = _direct_download_model(name, state)
                 if not model_path:
@@ -243,7 +281,7 @@ def _start_model_download_and_load(state: AppState, name: str) -> None:
             save_state_config(state)
             log.info("Model loaded: %s on %s", name, state.device)
         except Exception:
-            if state.device == "cuda":
+            if state.device == "cuda" and model_path:
                 log.warning("CUDA unavailable after download, falling back to CPU")
                 state.device, state.compute_type = device_settings(False)
                 try:

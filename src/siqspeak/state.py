@@ -101,5 +101,16 @@ class AppState:
     # Tray
     icon: Any = None  # pystray.Icon
 
+    # HuggingFace auth
+    needs_hf_auth: bool = False
+    hf_username: str | None = None
+    hf_token_input: str = ""
+    hf_auth_error: str | None = None
+    hf_auth_error_time: float = 0.0
+    hf_auth_verifying: bool = False
+    hf_auth_success: bool = False
+    hf_auth_success_time: float = 0.0
+    hf_pending_model: str | None = None  # model to download after auth
+
     # Mouse hook
     mouse_hook: int | None = None
