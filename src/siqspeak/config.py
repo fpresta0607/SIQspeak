@@ -85,7 +85,7 @@ CYAN = (0, 200, 220)
 GRAY = (140, 140, 150)
 WHITE = (230, 240, 255)
 PILL_BG = (15, 20, 35)
-PILL_BG_ALPHA = 0.88
+PILL_BG_ALPHA = 1.0
 
 TRAY_COLORS = {
     "gray": (*GRAY, 255),

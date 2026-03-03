@@ -29,16 +29,16 @@ def _draw_toggle_pill(draw: ImageDraw.Draw, x: int, y: int, w: int, h: int,
                       is_on: bool, font_toggle) -> None:
     """Draw an ON/OFF toggle pill at the given position."""
     if is_on:
-        draw.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=(*CYAN, 180))
+        draw.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=(*CYAN, 255))
         knob_x = x + w - h + 4
         draw.ellipse([knob_x, y + 4, knob_x + h - 8, y + h - 4],
-                     fill=(255, 255, 255, 240))
-        draw.text((x + 8, y + 6), "ON", font=font_toggle, fill=(15, 20, 35, 220))
+                     fill=(255, 255, 255, 255))
+        draw.text((x + 8, y + 6), "ON", font=font_toggle, fill=(15, 20, 35, 255))
     else:
-        draw.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=(*GRAY, 80))
+        draw.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=(*GRAY, 160))
         knob_x = x + 4
-        draw.ellipse([knob_x, y + 4, knob_x + h - 8, y + h - 4], fill=(*GRAY, 200))
-        draw.text((x + w - 30, y + 6), "OFF", font=font_toggle, fill=(*GRAY, 200))
+        draw.ellipse([knob_x, y + 4, knob_x + h - 8, y + h - 4], fill=(*GRAY, 255))
+        draw.text((x + w - 30, y + 6), "OFF", font=font_toggle, fill=(*GRAY, 255))
 
 
 def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
@@ -87,28 +87,28 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     )
 
     # Header
-    draw.text((20, 12), "Settings", fill=(*WHITE, 230), font=font_title)
+    draw.text((20, 12), "Settings", fill=(*WHITE, 255), font=font_title)
     draw.line([(20, SETTINGS_HEADER_H - 4), (panel_w - 20, SETTINGS_HEADER_H - 4)],
-              fill=(*GRAY, 50))
+              fill=(*GRAY, 100))
 
     cur_y = SETTINGS_HEADER_H + 8
     pill_w, pill_h = 56, 28
 
     # --- GPU toggle row (only if CUDA detected) ---
     if state.has_cuda:
-        draw.text((20, cur_y + 10), "Use GPU", font=font, fill=(230, 240, 255, 220))
+        draw.text((20, cur_y + 10), "Use GPU", font=font, fill=(230, 240, 255, 255))
         _draw_toggle_pill(draw, panel_w - pill_w - 20, cur_y + 8, pill_w, pill_h,
                           state.device == "cuda", font_toggle)
         cur_y += row_h
 
     # --- Mic selector row ---
     chevron = "\u25BC" if state.mic_expanded else "\u25B6"
-    draw.text((20, cur_y + 10), "Microphone", font=font, fill=(230, 240, 255, 220))
+    draw.text((20, cur_y + 10), "Microphone", font=font, fill=(230, 240, 255, 255))
     # Show current device name + chevron on the right
     label = f"{mic_name}  {chevron}"
     bbox = draw.textbbox((0, 0), label, font=font_mic)
     tw = bbox[2] - bbox[0]
-    draw.text((panel_w - tw - 20, cur_y + 13), label, font=font_mic, fill=(*CYAN, 200))
+    draw.text((panel_w - tw - 20, cur_y + 13), label, font=font_mic, fill=(*CYAN, 255))
     cur_y += row_h
 
     # --- Expanded mic device list ---
@@ -133,7 +133,7 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     btn_w = panel_w - 40
     draw.rounded_rectangle(
         [btn_x, btn_y, btn_x + btn_w, btn_y + quit_btn_h],
-        radius=8, fill=(180, 40, 40, 220),
+        radius=8, fill=(180, 40, 40, 255),
     )
     _draw_centered_text(draw, "Quit", panel_w // 2, btn_y + quit_btn_h // 2,
                         font_btn, (255, 255, 255, 240))

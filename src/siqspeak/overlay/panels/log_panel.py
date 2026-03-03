@@ -96,18 +96,18 @@ def _render_log_panel(state: AppState) -> tuple[np.ndarray, int, int]:
         fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], 255),
     )
 
-    draw.text((20, 14), "Transcription Log", fill=(*WHITE, 230), font=font_header)
+    draw.text((20, 14), "Transcription Log", fill=(*WHITE, 255), font=font_header)
     draw.text((20, 42), "Hold Ctrl+Shift+Space to dictate  \u2022  Release to transcribe",
-              fill=(*GRAY, 150), font=font_sub)
-    draw.line([(20, LOG_HEADER_H - 4), (panel_w - 20, LOG_HEADER_H - 4)], fill=(*GRAY, 50))
+              fill=(*GRAY, 200), font=font_sub)
+    draw.line([(20, LOG_HEADER_H - 4), (panel_w - 20, LOG_HEADER_H - 4)], fill=(*GRAY, 100))
 
     # Scroll indicators
     can_scroll_up = state.log_scroll_offset > 0
     can_scroll_down = total_entries > state.log_scroll_offset + max_vis
     if can_scroll_up:
-        draw.text((panel_w - 34, 16), "\u25b2", fill=(*CYAN, 150), font=font_scroll)
+        draw.text((panel_w - 34, 16), "\u25b2", fill=(*CYAN, 255), font=font_scroll)
     if can_scroll_down:
-        draw.text((panel_w - 34, panel_h - 22), "\u25bc", fill=(*CYAN, 150), font=font_scroll)
+        draw.text((panel_w - 34, panel_h - 22), "\u25bc", fill=(*CYAN, 255), font=font_scroll)
 
     is_copied_fresh = state.copied_row is not None and (time.time() - state.copied_time) < 1.5
 
@@ -118,11 +118,11 @@ def _render_log_panel(state: AppState) -> tuple[np.ndarray, int, int]:
 
         ts = entry.get("timestamp", "")
         if ts:
-            draw.text((20, y + 12), ts, fill=(*GRAY, 150), font=font_ts)
+            draw.text((20, y + 12), ts, fill=(*GRAY, 200), font=font_ts)
 
         for li, line in enumerate(wrapped_lines):
             draw.text((LOG_TEXT_LEFT, y + 10 + li * LOG_LINE_H), line,
-                       fill=(*WHITE, 245), font=font_text)
+                       fill=(*WHITE, 255), font=font_text)
 
         # Copy button: only for real transcriptions, visible on hover/copied
         has_text = bool(entry.get("text")) and entry.get("time_epoch", 0) != 0
@@ -154,7 +154,7 @@ def _render_log_panel(state: AppState) -> tuple[np.ndarray, int, int]:
 
         if idx < len(entries) - 1:
             div_y = y + row_h - 1
-            draw.line([(20, div_y), (panel_w - 20, div_y)], fill=(*GRAY, 30))
+            draw.line([(20, div_y), (panel_w - 20, div_y)], fill=(*GRAY, 80))
 
         y += row_h
 

@@ -22,7 +22,7 @@ def _render_welcome() -> np.ndarray:
     draw = ImageDraw.Draw(img)
     draw.rounded_rectangle(
         [0, 0, WELCOME_W - 1, WELCOME_H - 1], radius=12,
-        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], int(0.94 * 255)),
+        fill=(PILL_BG[0], PILL_BG[1], PILL_BG[2], 255),
     )
 
     try:
