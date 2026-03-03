@@ -36,6 +36,51 @@ def _check_internet() -> bool:
         return False
 
 
+def _direct_download_model(name: str, state=None) -> str | None:
+    """Download model files directly from HuggingFace CDN without hub auth.
+    
+    Falls back to raw URL downloads when huggingface_hub auth fails.
+    Returns the model directory path, or None on failure.
+    """
+    import os
+    import urllib.request
+
+    from faster_whisper.utils import _MODELS
+
+    repo_id = _MODELS.get(name)
+    if not repo_id:
+        return None
+
+    # e.g. "Systran/faster-whisper-tiny" -> cache dir
+    cache_base = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+    safe_repo = repo_id.replace("/", "--")
+    model_dir = os.path.join(cache_base, f"models--{safe_repo}", "snapshots", "main")
+    os.makedirs(model_dir, exist_ok=True)
+
+    base_url = f"https://huggingface.co/{repo_id}/resolve/main"
+    files = ["model.bin", "config.json", "tokenizer.json", "preprocessor_config.json", "vocabulary.json", "vocabulary.txt"]
+
+    for fname in files:
+        dest = os.path.join(model_dir, fname)
+        if os.path.exists(dest):
+            continue
+        url = f"{base_url}/{fname}"
+        try:
+            log.info("Direct downloading %s/%s", repo_id, fname)
+            urllib.request.urlretrieve(url, dest)
+        except Exception as e:
+            log.warning("Direct download failed for %s: %s", fname, e)
+            # model.bin is required, others are optional
+            if fname == "model.bin":
+                return None
+
+    # Verify model.bin exists
+    if os.path.exists(os.path.join(model_dir, "model.bin")):
+        log.info("Direct download complete: %s", model_dir)
+        return model_dir
+    return None
+
+
 def _make_progress_class(state: AppState):
     """Build a tqdm-compatible class that reports download progress to state.
 
@@ -172,10 +217,18 @@ def _start_model_download_and_load(state: AppState, name: str) -> None:
                 "model.bin", "tokenizer.json", "vocabulary.*",
             ]
 
-            model_path = huggingface_hub.snapshot_download(
-                repo_id, allow_patterns=allow_patterns,
-                tqdm_class=_make_progress_class(state),
-            )
+            model_path = None
+            try:
+                model_path = huggingface_hub.snapshot_download(
+                    repo_id, allow_patterns=allow_patterns,
+                    tqdm_class=_make_progress_class(state),
+                )
+            except Exception as hub_err:
+                log.warning("HF Hub download failed (%s), trying direct download...", hub_err)
+                model_path = _direct_download_model(name, state)
+                if not model_path:
+                    raise RuntimeError(f"Both HF Hub and direct download failed for {name}")
+
             state.download_progress = 1.0
             log.info("Download complete: %s, loading...", name)
 

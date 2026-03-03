@@ -91,37 +91,74 @@ echo.
 :: ------------------------------------------------------------------
 :: 5. Pre-download default model
 :: ------------------------------------------------------------------
-echo   The default speech model (tiny, ~75 MB) will be downloaded
-echo   on first use if not already available.
+echo   The default speech model (tiny, ~75 MB) will be downloaded now.
 echo.
-set /p PREDOWNLOAD="   Download it now? (Y/N): "
-if /i "%PREDOWNLOAD%"=="Y" (
+
+:: Try downloading via the app's built-in download (handles HF auth gracefully)
+echo   [..] Downloading tiny model (~75 MB^)...
+echo       This may take a minute depending on your connection.
+echo.
+
+.venv\Scripts\python.exe -c "import sys; sys.stderr = sys.stdout; exec(\"\"\"
+import os, sys
+
+# Method 1: Try HuggingFace hub download (works if no auth required or token is set)
+try:
+    from faster_whisper import WhisperModel
+    m = WhisperModel('tiny', device='cpu', compute_type='int8')
+    del m
+    print('   [OK] Model downloaded and verified.')
+    sys.exit(0)
+except Exception as e:
+    print(f'   [..] HuggingFace direct download failed: {e}')
+    print('   [..] Trying alternative download method...')
+
+# Method 2: Download model files directly from HuggingFace without hub auth
+try:
+    import urllib.request
+    import hashlib
+    
+    # Create cache directory that faster-whisper expects
+    cache_base = os.path.join(os.path.expanduser('~'), '.cache', 'huggingface', 'hub')
+    model_dir = os.path.join(cache_base, 'models--Systran--faster-whisper-tiny', 'snapshots', 'main')
+    os.makedirs(model_dir, exist_ok=True)
+    
+    base_url = 'https://huggingface.co/Systran/faster-whisper-tiny/resolve/main'
+    files = ['model.bin', 'config.json', 'tokenizer.json', 'preprocessor_config.json', 'vocabulary.json', 'vocabulary.txt']
+    
+    for fname in files:
+        dest = os.path.join(model_dir, fname)
+        if os.path.exists(dest):
+            print(f'   [OK] {fname} already exists')
+            continue
+        url = f'{base_url}/{fname}'
+        print(f'   [..] Downloading {fname}...')
+        try:
+            urllib.request.urlretrieve(url, dest)
+            print(f'   [OK] {fname} downloaded')
+        except Exception as fe:
+            print(f'   [--] {fname} skipped: {fe}')
+    
+    # Verify the model loads
+    from faster_whisper import WhisperModel
+    m = WhisperModel(model_dir, device='cpu', compute_type='int8')
+    del m
+    print('   [OK] Model verified successfully.')
+    sys.exit(0)
+except Exception as e2:
+    print(f'   [!] Alternative download also failed: {e2}')
+    print()
+    print('   The model will try to download again when you first run SIQspeak.')
+    print('   If downloads keep failing, check your firewall/antivirus settings.')
+    print('   You can also manually place model files in the HF cache directory.')
+    sys.exit(1)
+\"\"\")" 2>&1
+
+if !errorlevel! neq 0 (
     echo.
-    echo   [..] Downloading tiny model (~75 MB^)...
-    echo       This may take a minute depending on your connection.
+    echo   [!] Model download had issues but setup can continue.
+    echo       SIQspeak will retry the download on first launch.
     echo.
-    if !HAS_GPU! equ 1 (
-        .venv\Scripts\python.exe -c "import sys; sys.stderr = sys.stdout; from faster_whisper import WhisperModel; print('   [..] Loading model...'); m = WhisperModel('tiny', device='cuda', compute_type='float16'); print('   [OK] Model ready.')" 2>&1
-    ) else (
-        .venv\Scripts\python.exe -c "import sys; sys.stderr = sys.stdout; from faster_whisper import WhisperModel; print('   [..] Loading model...'); m = WhisperModel('tiny', device='cpu', compute_type='int8'); print('   [OK] Model ready.')" 2>&1
-    )
-    if !errorlevel! neq 0 (
-        echo.
-        echo   [!] Model download failed.
-        echo.
-        echo   Common causes:
-        echo     - Firewall or antivirus blocking Python's internet access
-        echo     - Missing Visual C++ Redistributable (needed by ctranslate2^)
-        echo       Download it here: https://aka.ms/vs/17/release/vc_redist.x64.exe
-        echo     - Hugging Face servers temporarily down
-        echo.
-        echo   The model will try to download again on first use.
-        echo   You can also re-run setup.bat to try again.
-        echo.
-        pause
-    )
-) else (
-    echo   [--] Skipped. Model will download on first use.
 )
 echo.
 
