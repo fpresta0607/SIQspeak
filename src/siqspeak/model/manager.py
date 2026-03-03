@@ -6,6 +6,7 @@ import time
 
 from faster_whisper import WhisperModel
 
+from siqspeak._frozen import bundled_model_path
 from siqspeak.config import MODEL_SIZES_MB, device_settings, save_state_config
 from siqspeak.state import AppState
 
@@ -103,7 +104,9 @@ def _start_model_load(state: AppState, name: str) -> None:
 
     def _load():
         try:
-            new_model = WhisperModel(name, device=state.device, compute_type=state.compute_type)
+            # Use bundled model path if available (frozen/installer build)
+            model_path = bundled_model_path(name) or name
+            new_model = WhisperModel(model_path, device=state.device, compute_type=state.compute_type)
             # Validate CUDA actually works by running minimal inference
             if state.device == "cuda":
                 import numpy as np

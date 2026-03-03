@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import os
+import sys
 from typing import TYPE_CHECKING
 
 from PIL import Image
@@ -21,6 +22,9 @@ log = logging.getLogger("siqspeak")
 
 
 def _find_project_root() -> str:
+    # When running as frozen exe, use the exe's directory for config/logs
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
     # When running as package, find the root by looking for dictate.ico
     d = os.getcwd()
     if os.path.exists(os.path.join(d, "dictate.ico")):
