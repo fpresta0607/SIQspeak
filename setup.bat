@@ -197,26 +197,12 @@ goto :shortcut_done
 :make_shortcut
 echo   [..] Creating desktop shortcut...
 
-if not exist "!SIQDIR!.venv\Scripts\pythonw.exe" (
-    echo   [!] pythonw.exe not found. Shortcut skipped.
-    goto :shortcut_done
-)
+if not exist "!SIQDIR!.venv\Scripts\pythonw.exe" goto :shortcut_missing
+powershell -NoProfile -ExecutionPolicy Bypass -File "!SIQDIR!scripts\create_shortcut.ps1" -SiqDir "!SIQDIR!"
+goto :shortcut_done
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "try { ^
-        $ws = New-Object -ComObject WScript.Shell; ^
-        $desktop = $ws.SpecialFolders('Desktop'); ^
-        $sc = $ws.CreateShortcut([IO.Path]::Combine($desktop, 'SIQspeak.lnk')); ^
-        $sc.TargetPath = '%SIQDIR%.venv\Scripts\pythonw.exe'; ^
-        $sc.Arguments = '-m siqspeak'; ^
-        $sc.WorkingDirectory = '%SIQDIR%'; ^
-        if (Test-Path '%SIQDIR%dictate.ico') { $sc.IconLocation = '%SIQDIR%dictate.ico,0' }; ^
-        $sc.Description = 'SIQspeak - local speech-to-text'; ^
-        $sc.Save(); ^
-        Write-Host '   [OK] Desktop shortcut created.' ^
-    } catch { ^
-        Write-Host ('   [!] Shortcut failed: ' + $_.Exception.Message) ^
-    }"
+:shortcut_missing
+echo   [!] pythonw.exe not found. Shortcut skipped.
 
 :shortcut_done
 echo.
