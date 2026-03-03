@@ -85,17 +85,22 @@ echo   on first use if not already available.
 echo.
 set /p PREDOWNLOAD="   Download it now? (Y/N): "
 if /i "%PREDOWNLOAD%"=="Y" (
+    echo.
+    echo   [..] Downloading tiny model (~75 MB^)...
+    echo       This may take a minute depending on your connection.
+    echo.
     if !HAS_GPU! equ 1 (
-        echo   [..] Downloading tiny model (~75 MB, GPU mode^)...
-        .venv\Scripts\python.exe -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cuda', compute_type='float16')"
+        .venv\Scripts\python.exe -c "import sys; sys.stderr = sys.stdout; from faster_whisper import WhisperModel; print('   [..] Loading model...'); m = WhisperModel('tiny', device='cuda', compute_type='float16'); print('   [OK] Model ready.')" 2>&1
     ) else (
-        echo   [..] Downloading tiny model (~75 MB^)...
-        .venv\Scripts\python.exe -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8')"
+        .venv\Scripts\python.exe -c "import sys; sys.stderr = sys.stdout; from faster_whisper import WhisperModel; print('   [..] Loading model...'); m = WhisperModel('tiny', device='cpu', compute_type='int8'); print('   [OK] Model ready.')" 2>&1
     )
-    if !errorlevel! equ 0 (
-        echo   [OK] Model downloaded and ready.
-    ) else (
-        echo   [!] Download failed. The model will download on first use.
+    if !errorlevel! neq 0 (
+        echo.
+        echo   [!] Model download failed. This is usually a network issue.
+        echo       The model will download automatically on first use.
+        echo       You can also re-run setup.bat to try again.
+        echo.
+        pause
     )
 ) else (
     echo   [--] Skipped. Model will download on first use.
@@ -115,7 +120,7 @@ if /i "%SHORTCUT%"=="Y" (
          $sc.Arguments = '-m siqspeak'; ^
          $sc.WorkingDirectory = (Resolve-Path '.').Path; ^
          $sc.IconLocation = (Resolve-Path 'dictate.ico').Path + ',0'; ^
-         $sc.Description = 'SIQspeak — local speech-to-text'; ^
+         $sc.Description = 'SIQspeak - local speech-to-text'; ^
          $sc.Save()"
     if !errorlevel! equ 0 (
         echo   [OK] Desktop shortcut created.
