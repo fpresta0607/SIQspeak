@@ -149,7 +149,7 @@ def _render_hf_auth_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     # Error message
     if state.hf_auth_error and time.time() - state.hf_auth_error_time < 5.0:
         draw.text((20, y + 40), state.hf_auth_error,
-                  fill=(*ORANGE, 255), font=font_small)
+                  fill=(*CYAN, 255), font=font_small)
 
     return _rgba_to_premul_bgra(img), panel_w, panel_h
 
@@ -178,8 +178,8 @@ def _render_model_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     ORANGE = (255, 160, 50)
     GREEN = (80, 220, 120)
 
-    # Clear stale download errors after 8 seconds
-    if state.download_error and time.time() - state.download_error_time > 8.0:
+    # Clear stale download errors after 3 seconds
+    if state.download_error and time.time() - state.download_error_time > 3.0:
         state.download_error = None
 
     # Check HF auth status for header badge
@@ -271,9 +271,9 @@ def _render_model_panel(state: AppState) -> tuple[np.ndarray, int, int]:
         text_y = y + (MODEL_PANEL_ROW_H - 18) // 2
 
         if has_error:
-            draw.text((54, text_y), name, fill=(*ORANGE, 255), font=font)
+            draw.text((54, text_y), name, fill=(*CYAN, 255), font=font)
             draw.text((panel_w - 20, text_y + 2), state.download_error,
-                      fill=(*ORANGE, 255), font=font_small, anchor="ra")
+                      fill=(*CYAN, 255), font=font_small, anchor="ra")
         elif is_confirming:
             draw.rounded_rectangle(
                 [4, y + 2, panel_w - 4, y + MODEL_PANEL_ROW_H - 2],

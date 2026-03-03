@@ -239,10 +239,10 @@ def message_loop(state: AppState) -> None:
                                 state.log_scroll_offset + scroll_lines, max_offset))
                             _show_log_panel(state)
 
-                # Loading timeout safety: reset stuck model_loading after 60s
+                # Loading timeout safety: reset stuck model_loading after 300s (5 min)
                 if (state.model_loading and state.model_loading_start > 0
-                        and time.time() - state.model_loading_start > 60.0):
-                        log.warning("Model load timed out after 60s")
+                        and time.time() - state.model_loading_start > 300.0):
+                        log.warning("Model load timed out after 300s")
                         state.model_loading = False
                         state.download_error = "Load timed out"
                         state.download_error_time = time.time()
