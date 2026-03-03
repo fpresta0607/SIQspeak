@@ -19,23 +19,60 @@ TOKEN_URL = (
 SIGNUP_URL = "https://huggingface.co/join"
 
 
+def _read_token_file() -> str | None:
+    """Read token from known file locations."""
+    import os
+    home = os.path.expanduser("~")
+    paths = [
+        os.path.join(home, ".cache", "huggingface", "token"),
+        os.path.join(home, ".huggingface", "token"),
+    ]
+    for p in paths:
+        try:
+            if os.path.exists(p):
+                token = open(p).read().strip()
+                if token:
+                    return token
+        except Exception:
+            pass
+    return None
+
+
 def has_token() -> bool:
     """Check if a HuggingFace token exists locally."""
+    # Check env var first
+    import os
+    if os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"):
+        return True
+    # Check huggingface_hub library
     try:
         from huggingface_hub import HfFolder
         token = HfFolder.get_token()
-        return token is not None and len(token.strip()) > 0
+        if token and token.strip():
+            return True
     except Exception:
-        return False
+        pass
+    # Check file locations directly
+    return _read_token_file() is not None
 
 
 def get_token() -> str | None:
     """Return the stored HF token, or None."""
+    import os
+    # Env var takes priority
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    if token:
+        return token.strip()
+    # Library
     try:
         from huggingface_hub import HfFolder
-        return HfFolder.get_token()
+        token = HfFolder.get_token()
+        if token and token.strip():
+            return token.strip()
     except Exception:
-        return None
+        pass
+    # File fallback
+    return _read_token_file()
 
 
 def validate_token(token: str | None = None) -> str | None:

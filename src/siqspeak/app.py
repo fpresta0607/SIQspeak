@@ -206,6 +206,23 @@ def message_loop(state: AppState) -> None:
                             from siqspeak.overlay.panels import _show_panel_window
                             buf, pw, ph = _render_model_panel(state)
                             _show_panel_window(state, state.model_panel_hwnd, buf, pw, ph)
+
+                        # Auth button hover tracking
+                        if state.needs_hf_auth and not state.hf_auth_success:
+                            from siqspeak.overlay.panels.model_panel import AUTH_BTN_Y, AUTH_BUTTONS
+                            rx = pt.x - rect.left
+                            ry_abs = pt.y - rect.top
+                            new_hover = ""
+                            if AUTH_BTN_Y <= ry_abs <= AUTH_BTN_Y + 32:
+                                for bi, btn in enumerate(AUTH_BUTTONS):
+                                    if btn["x1"] <= rx <= btn["x2"]:
+                                        new_hover = f"btn{bi}"
+                                        break
+                            if new_hover != state.hf_token_input:
+                                state.hf_token_input = new_hover
+                                from siqspeak.overlay.panels import _show_panel_window
+                                buf2, pw2, ph2 = _render_model_panel(state)
+                                _show_panel_window(state, state.model_panel_hwnd, buf2, pw2, ph2)
                 elif state.active_panel == "settings":
                     _handle_settings_click(state)
 

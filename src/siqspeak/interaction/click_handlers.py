@@ -197,7 +197,7 @@ def _handle_hf_auth_click(state: AppState) -> None:
 
     from siqspeak.hf_auth import open_token_page, save_token, validate_token
     from siqspeak.model.manager import _retry_download_after_auth
-    from siqspeak.overlay.panels.model_panel import _show_model_panel
+    from siqspeak.overlay.panels.model_panel import AUTH_BTN_Y, AUTH_BUTTONS, _show_model_panel
 
     user32 = ctypes.windll.user32
 
@@ -209,44 +209,67 @@ def _handle_hf_auth_click(state: AppState) -> None:
     rx = pt.x - rect.left
     ry = pt.y - rect.top
 
-    # Button positions (must match _render_hf_auth_panel layout)
-    # Buttons are at approximately y=222 (btn_y in render)
-    # Layout: 14 + 32 + 12 + 18*2 + 28 + 22*4 + 30 = ~240
-    btn_y = 222  # approximate, matching render layout
-
-    if ry < btn_y or ry > btn_y + 30:
+    btn_y = AUTH_BTN_Y
+    if ry < btn_y or ry > btn_y + 32:
         return
 
-    # "Open Browser" button: x=20..140
-    if 20 <= rx <= 140:
+    # Determine which button was clicked
+    clicked = None
+    for i, btn in enumerate(AUTH_BUTTONS):
+        if btn["x1"] <= rx <= btn["x2"]:
+            clicked = i
+            break
+
+    if clicked is None:
+        return
+
+    # --- Button 0: Open Browser ---
+    if clicked == 0:
         log.info("HF auth: opening browser")
         open_token_page()
-        _show_model_panel(state)
         return
 
-    # "Paste & Verify" button: x=150..280
-    if 150 <= rx <= 280:
+    # --- Button 1: Paste & Verify ---
+    if clicked == 1:
         log.info("HF auth: paste & verify")
         # Read token from clipboard
+        token = ""
         try:
             import pyperclip
             token = pyperclip.paste().strip()
         except Exception:
+            pass
+
+        if not token:
             # Fallback: Win32 clipboard
             try:
+                kernel32 = ctypes.windll.kernel32
                 user32_lib = ctypes.windll.user32
                 user32_lib.OpenClipboard(0)
-                handle = user32_lib.GetClipboardData(1)  # CF_TEXT
+                # Try CF_UNICODETEXT first (13), then CF_TEXT (1)
+                handle = user32_lib.GetClipboardData(13)
                 if handle:
-                    token = ctypes.c_char_p(handle).value.decode("utf-8", errors="ignore").strip()
-                else:
-                    token = ""
+                    kernel32.GlobalLock.restype = ctypes.c_wchar_p
+                    ptr = kernel32.GlobalLock(handle)
+                    if ptr:
+                        token = str(ptr).strip()
+                    kernel32.GlobalUnlock(handle)
+                if not token:
+                    handle = user32_lib.GetClipboardData(1)
+                    if handle:
+                        token = ctypes.c_char_p(handle).value.decode("utf-8", errors="ignore").strip()
                 user32_lib.CloseClipboard()
-            except Exception:
-                token = ""
+            except Exception as e:
+                log.warning("Clipboard read failed: %s", e)
 
-        if not token or not token.startswith("hf_"):
-            state.hf_auth_error = "No valid token in clipboard (should start with hf_)"
+        if not token:
+            state.hf_auth_error = "Clipboard is empty - copy your token first"
+            state.hf_auth_error_time = time.time()
+            _show_model_panel(state)
+            return
+
+        if not token.startswith("hf_"):
+            state.hf_auth_error = "Token should start with hf_ - check and copy again"
             state.hf_auth_error_time = time.time()
             _show_model_panel(state)
             return
@@ -284,8 +307,8 @@ def _handle_hf_auth_click(state: AppState) -> None:
         threading.Thread(target=_verify, daemon=True).start()
         return
 
-    # "Cancel" button: x=290..350
-    if 290 <= rx <= 350:
+    # --- Button 2: Cancel ---
+    if clicked == 2:
         log.info("HF auth: cancelled")
         state.needs_hf_auth = False
         state.hf_pending_model = None

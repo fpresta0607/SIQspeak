@@ -160,6 +160,7 @@ def _start_model_load(state: AppState, name: str) -> None:
                 list(new_model.transcribe(_silence, beam_size=1)[0])
             state.model = new_model
             state.loaded_model_name = name
+            state.download_error = None
             save_state_config(state)
             log.info("Model loaded: %s on %s", name, state.device)
         except Exception:
@@ -170,6 +171,7 @@ def _start_model_load(state: AppState, name: str) -> None:
                     new_model = WhisperModel(name, device=state.device, compute_type=state.compute_type)
                     state.model = new_model
                     state.loaded_model_name = name
+                    state.download_error = None
                     save_state_config(state)
                     log.info("Model loaded: %s on cpu (CUDA fallback)", name)
                 except Exception:
@@ -278,6 +280,7 @@ def _do_download_and_load(state: AppState, name: str) -> None:
                 list(new_model.transcribe(_silence, beam_size=1)[0])
             state.model = new_model
             state.loaded_model_name = name
+            state.download_error = None
             save_state_config(state)
             log.info("Model loaded: %s on %s", name, state.device)
         except Exception:
@@ -288,6 +291,7 @@ def _do_download_and_load(state: AppState, name: str) -> None:
                     new_model = WhisperModel(model_path, device=state.device, compute_type=state.compute_type)
                     state.model = new_model
                     state.loaded_model_name = name
+                    state.download_error = None
                     save_state_config(state)
                     log.info("Model loaded: %s on cpu (CUDA fallback)", name)
                 except Exception:
