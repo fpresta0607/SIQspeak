@@ -198,7 +198,7 @@ goto :shortcut_done
 echo   [..] Creating desktop shortcut...
 
 if not exist "!SIQDIR!.venv\Scripts\pythonw.exe" goto :shortcut_missing
-powershell -NoProfile -ExecutionPolicy Bypass -File "!SIQDIR!scripts\create_shortcut.ps1" -SiqDir "!SIQDIR!"
+powershell -NoProfile -ExecutionPolicy Bypass -File "!SIQDIR!scripts\create_shortcut.ps1"
 goto :shortcut_done
 
 :shortcut_missing
