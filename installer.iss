@@ -40,6 +40,7 @@ Name: "startup"; Description: "Run SIQspeak when Windows starts"; GroupDescripti
 
 [Files]
 Source: "dist\SIQspeak\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dictate.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\dictate.ico"
