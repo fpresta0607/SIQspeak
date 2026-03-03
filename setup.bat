@@ -7,6 +7,10 @@ echo    SIQspeak Setup
 echo   ===========================
 echo.
 
+:: Save our directory so shortcuts and paths resolve correctly
+set "SIQDIR=%~dp0"
+cd /d "%SIQDIR%"
+
 :: ------------------------------------------------------------------
 :: 1. Check Python
 :: ------------------------------------------------------------------
@@ -51,6 +55,13 @@ echo   [..] Installing dependencies...
 .venv\Scripts\pip install -e .
 if %errorlevel% neq 0 (
     echo   [!] Failed to install dependencies.
+    echo.
+    echo   Common fixes:
+    echo     - Make sure you have internet access
+    echo     - Try: .venv\Scripts\pip install -e . --no-cache-dir
+    echo     - Install Visual C++ Redistributable if you see "DLL load failed"
+    echo       https://aka.ms/vs/17/release/vc_redist.x64.exe
+    echo.
     pause
     exit /b 1
 )
@@ -96,9 +107,16 @@ if /i "%PREDOWNLOAD%"=="Y" (
     )
     if !errorlevel! neq 0 (
         echo.
-        echo   [!] Model download failed. This is usually a network issue.
-        echo       The model will download automatically on first use.
-        echo       You can also re-run setup.bat to try again.
+        echo   [!] Model download failed.
+        echo.
+        echo   Common causes:
+        echo     - Firewall or antivirus blocking Python's internet access
+        echo     - Missing Visual C++ Redistributable (needed by ctranslate2^)
+        echo       Download it here: https://aka.ms/vs/17/release/vc_redist.x64.exe
+        echo     - Hugging Face servers temporarily down
+        echo.
+        echo   The model will try to download again on first use.
+        echo   You can also re-run setup.bat to try again.
         echo.
         pause
     )
@@ -113,23 +131,34 @@ echo.
 set /p SHORTCUT="   Create a desktop shortcut? (Y/N): "
 if /i "%SHORTCUT%"=="Y" (
     echo   [..] Creating desktop shortcut...
-    powershell -NoProfile -Command ^
-        "$ws = New-Object -ComObject WScript.Shell; ^
-         $sc = $ws.CreateShortcut([IO.Path]::Combine($ws.SpecialFolders('Desktop'), 'SIQspeak.lnk')); ^
-         $sc.TargetPath = (Resolve-Path '.venv\Scripts\pythonw.exe').Path; ^
-         $sc.Arguments = '-m siqspeak'; ^
-         $sc.WorkingDirectory = (Resolve-Path '.').Path; ^
-         $sc.IconLocation = (Resolve-Path 'dictate.ico').Path + ',0'; ^
-         $sc.Description = 'SIQspeak - local speech-to-text'; ^
-         $sc.Save()"
-    if !errorlevel! equ 0 (
-        echo   [OK] Desktop shortcut created.
-    ) else (
-        echo   [!] Could not create shortcut. You can do it manually later.
+    set "VENVPY=%SIQDIR%.venv\Scripts\pythonw.exe"
+    set "ICOFILE=%SIQDIR%dictate.ico"
+
+    if not exist "!VENVPY!" (
+        echo   [!] Could not find pythonw.exe at: !VENVPY!
+        echo       Shortcut creation skipped.
+        goto :shortcut_done
     )
+
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+        "try { ^
+            $ws = New-Object -ComObject WScript.Shell; ^
+            $desktop = $ws.SpecialFolders('Desktop'); ^
+            $sc = $ws.CreateShortcut([IO.Path]::Combine($desktop, 'SIQspeak.lnk')); ^
+            $sc.TargetPath = '%SIQDIR%.venv\Scripts\pythonw.exe'; ^
+            $sc.Arguments = '-m siqspeak'; ^
+            $sc.WorkingDirectory = '%SIQDIR%'; ^
+            if (Test-Path '%SIQDIR%dictate.ico') { $sc.IconLocation = '%SIQDIR%dictate.ico,0' }; ^
+            $sc.Description = 'SIQspeak - local speech-to-text'; ^
+            $sc.Save(); ^
+            Write-Host '   [OK] Desktop shortcut created.' ^
+        } catch { ^
+            Write-Host ('   [!] Shortcut failed: ' + $_.Exception.Message) ^
+        }"
 ) else (
     echo   [--] Skipped desktop shortcut.
 )
+:shortcut_done
 echo.
 
 :: ------------------------------------------------------------------
@@ -138,7 +167,7 @@ echo.
 set /p RUNNOW="   Run SIQspeak now? (Y/N): "
 if /i "%RUNNOW%"=="Y" (
     echo   [..] Starting SIQspeak...
-    start "" ".venv\Scripts\pythonw.exe" -m siqspeak
+    start "" "%SIQDIR%.venv\Scripts\pythonw.exe" -m siqspeak
     echo   [OK] SIQspeak is running in the system tray.
 ) else (
     echo.
