@@ -94,7 +94,7 @@ def message_loop(state: AppState) -> None:
     _show_welcome(state)
 
     timer_id = user32.SetTimer(None, 0, 33, None)  # ~30fps
-    HWND_TOPMOST = -1
+    HWND_TOPMOST = ctypes.wintypes.HWND(-1)
     SWP_NOMOVE = 0x0002
     SWP_NOSIZE = 0x0001
     SWP_NOACTIVATE = 0x0010
@@ -273,9 +273,9 @@ def message_loop(state: AppState) -> None:
             if state.welcome_shown and time.time() - state.welcome_show_time >= 5.0:
                 _hide_welcome(state)
 
-            # Topmost re-assertion every ~2 seconds (60 ticks at 33ms)
+            # Topmost re-assertion every ~1 second (30 ticks at 33ms)
             topmost_tick += 1
-            if topmost_tick >= 60:
+            if topmost_tick >= 30:
                 topmost_tick = 0
                 if state.overlay_hwnd:
                     user32.SetWindowPos(

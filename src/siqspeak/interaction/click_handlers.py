@@ -78,9 +78,10 @@ def _handle_idle_pill_click(state: AppState) -> None:
         user32.GetCursorPos(ctypes.byref(pt))
         new_x = state.drag_pill_x + (pt.x - state.drag_start_x)
         new_y = state.drag_pill_y + (pt.y - state.drag_start_y)
+        HWND_TOPMOST = ctypes.wintypes.HWND(-1)
         user32.SetWindowPos(
-            state.overlay_hwnd, None, new_x, new_y, IDLE_W, IDLE_H,
-            0x0010 | 0x0004,
+            state.overlay_hwnd, HWND_TOPMOST, new_x, new_y, IDLE_W, IDLE_H,
+            0x0010,
         )
         # Reposition open panel to follow
         if state.active_panel:

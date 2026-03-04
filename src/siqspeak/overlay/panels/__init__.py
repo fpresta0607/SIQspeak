@@ -24,7 +24,8 @@ def _show_panel_window(state: AppState, hwnd: int, buf: np.ndarray, pw: int, ph:
     sw, _sh = _screen_size()
     panel_x = max(8, min(panel_x, sw - pw - 8))
     panel_y = max(8, panel_y)
-    user32.SetWindowPos(hwnd, None, panel_x, panel_y, pw, ph, 0x0010 | 0x0004)
+    HWND_TOPMOST = ctypes.wintypes.HWND(-1)
+    user32.SetWindowPos(hwnd, HWND_TOPMOST, panel_x, panel_y, pw, ph, 0x0010)
     _update_layered_window(hwnd, buf, pw, ph)
     user32.ShowWindow(hwnd, 8)  # SW_SHOWNA
 

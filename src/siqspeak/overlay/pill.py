@@ -41,5 +41,6 @@ def _set_pill_mode(state: AppState, mode: str) -> None:
     else:
         x = (sw - w) // 2
         y = sh - h - 80
-    # SWP_NOACTIVATE | SWP_NOZORDER
-    user32.SetWindowPos(state.overlay_hwnd, None, x, y, w, h, 0x0010 | 0x0004)
+    # HWND_TOPMOST (-1) + SWP_NOACTIVATE — always on top of everything
+    HWND_TOPMOST = ctypes.wintypes.HWND(-1)
+    user32.SetWindowPos(state.overlay_hwnd, HWND_TOPMOST, x, y, w, h, 0x0010)
