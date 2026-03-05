@@ -92,18 +92,18 @@ def _transcription_worker(state: AppState) -> None:
                 state.prev_chunk_tail = text.split()[-OVERLAP_TAIL_WORDS:]
                 state.stream_texts.append(text)
 
-                if not state.stream_focus_done and state.target_hwnd:
+                if state.target_hwnd:
+                    if not state.stream_focus_done:
+                        try:
+                            focus_window(state.target_hwnd)
+                            time.sleep(0.15)
+                        except Exception:
+                            log.exception("STREAM: focus_window failed")
+                        state.stream_focus_done = True
                     try:
-                        focus_window(state.target_hwnd)
-                        time.sleep(0.15)
+                        type_text(text + " ", release_modifiers=False)
                     except Exception:
-                        log.exception("STREAM: focus_window failed")
-                    state.stream_focus_done = True
-
-                try:
-                    type_text(text + " ", release_modifiers=False)
-                except Exception:
-                    log.exception("STREAM: type_text failed")
+                        log.exception("STREAM: type_text failed")
 
         except RuntimeError as exc:
             log.exception("STREAM: transcription RuntimeError")

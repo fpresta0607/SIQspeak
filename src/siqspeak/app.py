@@ -11,6 +11,7 @@ import time
 from faster_whisper import WhisperModel
 from pystray import Icon, Menu, MenuItem
 
+from siqspeak._frozen import bundled_model_path
 from siqspeak.audio.devices import _get_input_devices
 from siqspeak.audio.recording import _load_log
 from siqspeak.config import (
@@ -325,8 +326,9 @@ def main() -> None:
     log.info("Loading model...")
     t0 = time.perf_counter()
     model_name = state.loaded_model_name
+    model_path = bundled_model_path(model_name) or model_name
     try:
-        state.model = WhisperModel(model_name, device=state.device, compute_type=state.compute_type)
+        state.model = WhisperModel(model_path, device=state.device, compute_type=state.compute_type)
         # Validate CUDA actually works by running minimal inference
         if state.device == "cuda":
             import numpy as np
@@ -336,7 +338,7 @@ def main() -> None:
         if state.device == "cuda":
             log.warning("GPU load failed, falling back to CPU")
             state.device, state.compute_type = device_settings(False)
-            state.model = WhisperModel(model_name, device=state.device, compute_type=state.compute_type)
+            state.model = WhisperModel(model_path, device=state.device, compute_type=state.compute_type)
         else:
             log.exception("Failed to load Whisper model")
             sys.exit(1)

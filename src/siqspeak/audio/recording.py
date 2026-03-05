@@ -92,6 +92,13 @@ def start_recording(state: AppState) -> None:
         return
 
     state.target_hwnd = ctypes.windll.user32.GetForegroundWindow()
+    # Don't type back into our own overlay or panel windows
+    own_hwnds = {
+        state.overlay_hwnd, state.log_panel_hwnd,
+        state.model_panel_hwnd, state.settings_panel_hwnd, state.welcome_hwnd,
+    }
+    if state.target_hwnd in own_hwnds:
+        state.target_hwnd = None
     state.current_level = 0.0
     state.display_level = 0.0
     state.audio_chunks = []
@@ -263,12 +270,13 @@ def _stop_and_transcribe_batch(state: AppState) -> None:
                     time.sleep(0.15)
                 except Exception:
                     log.exception("Failed to restore foreground window")
-
-            try:
-                type_text(text)
-            except Exception:
-                log.exception("Failed to type text")
-            log.info("TYPED: %s", text)
+                try:
+                    type_text(text)
+                except Exception:
+                    log.exception("Failed to type text")
+                log.info("TYPED: %s", text)
+            else:
+                log.info("SKIP TYPE (no valid target window): %s", text)
     except Exception:
         log.exception("Transcription failed")
     finally:
