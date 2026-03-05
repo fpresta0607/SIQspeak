@@ -274,15 +274,19 @@ def message_loop(state: AppState) -> None:
             if state.welcome_shown and time.time() - state.welcome_show_time >= 5.0:
                 _hide_welcome(state)
 
-            # Topmost re-assertion every ~1 second (30 ticks at 33ms)
+            # Topmost re-assertion every ~0.3 seconds (10 ticks at 33ms)
+            # More frequent than 1s to stay above aggressive apps
             topmost_tick += 1
-            if topmost_tick >= 30:
+            if topmost_tick >= 10:
                 topmost_tick = 0
-                if state.overlay_hwnd:
-                    user32.SetWindowPos(
-                        state.overlay_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                    )
+                for hwnd in (state.overlay_hwnd, state.log_panel_hwnd,
+                             state.model_panel_hwnd, state.settings_panel_hwnd,
+                             state.welcome_hwnd):
+                    if hwnd and user32.IsWindowVisible(hwnd):
+                        user32.SetWindowPos(
+                            hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                        )
 
 
 def main() -> None:
