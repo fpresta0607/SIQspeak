@@ -80,7 +80,7 @@ Root `dictate.py` is a 3-line shim for backward compatibility with existing shor
 **Flow:** `main()` (in `app.py`) loads model → starts pystray in background thread → runs unified Win32 message loop on main thread (handles hotkey, overlay animation, and hover/click events).
 
 **Hotkey cycle (hold-to-record):**
-1. Hold Ctrl+Shift+Space → `RegisterHotKey` fires `on_hotkey_down()` → `start_recording()` opens mic stream, saves `GetForegroundWindow()` as paste target, pill expands to active mode
+1. Hold Ctrl+Shift+Space → `RegisterHotKey` fires `on_hotkey_down()` → `start_recording()` opens mic stream, saves `GetForegroundWindow()` as paste target (own overlay/panel windows filtered out), pill expands to active mode
 2. Release Space → `_wait_for_release()` polling thread detects key-up via `GetAsyncKeyState` → `stop_and_transcribe()` runs Whisper inference, restores foreground window, types text via `SendInput` Unicode events, pill returns to idle
 
 **Overlay (two modes):**
@@ -133,7 +133,7 @@ Dev: `ruff`, `pyright`, `pytest`, `pytest-cov`
 
 ## Logging
 
-File-only logging to `dictate.log`. Format: `HH:MM:SS.mmm MESSAGE`. No console output.
+File-only logging to `dictate.log`. Format: `HH:MM:SS.mmm MESSAGE`. No console output. Log rotates at 5 MB (keeps 3 backups) to prevent unbounded growth.
 
 ## Notes
 
