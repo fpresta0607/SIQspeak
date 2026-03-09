@@ -4,12 +4,6 @@ Local speech-to-text for Windows. Hold a hotkey, speak, release - your words are
 
 Powered by OpenAI's [Whisper](https://github.com/openai/whisper) model running locally via [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
 
-## Download
-
-**[Download SIQspeak-Setup.exe](https://github.com/fpresta0607/SIQspeak/releases/latest)** - No Python required. Just install and go.
-
-The installer bundles everything you need, including the Whisper speech model. Works offline immediately after installation.
-
 ## Features
 
 - **Hold-to-talk** - Hold `Ctrl+Shift+Space` to record, release to transcribe
