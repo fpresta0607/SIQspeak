@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-SIQspeak — a Windows desktop app that provides local speech-to-text via OpenAI's Whisper model. Runs in the system tray; hold Ctrl+Shift+Space to record, release to transcribe and auto-type into the active window.
+SIQspeak — a Windows desktop app that provides local speech-to-text via OpenAI's Whisper model. Runs in the system tray; hold Ctrl+Win to record, release to transcribe and auto-type into the active window.
 
 ## Running
 
@@ -44,6 +44,7 @@ src/siqspeak/
   state.py                 # AppState dataclass — all mutable state (~100 fields)
   logging_setup.py         # configure_logging()
   hotkey.py                # on_hotkey_down(), _wait_for_release(), quit_app()
+  text_processing.py       # postprocess_transcription() — spoken coding syntax → symbols
   tray.py                  # load_tray_icon(), make_icon(), set_state()
   audio/
     recording.py           # start_recording(), stop_and_transcribe(), log persistence
@@ -80,8 +81,8 @@ Root `dictate.py` is a 3-line shim for backward compatibility with existing shor
 **Flow:** `main()` (in `app.py`) loads model → starts pystray in background thread → runs unified Win32 message loop on main thread (handles hotkey, overlay animation, and hover/click events).
 
 **Hotkey cycle (hold-to-record):**
-1. Hold Ctrl+Shift+Space → `RegisterHotKey` fires `on_hotkey_down()` → `start_recording()` opens mic stream, saves `GetForegroundWindow()` as paste target (own overlay/panel windows filtered out), pill expands to active mode
-2. Release Space → `_wait_for_release()` polling thread detects key-up via `GetAsyncKeyState` → `stop_and_transcribe()` runs Whisper inference, restores foreground window, types text via `SendInput` Unicode events, pill returns to idle
+1. Hold Ctrl+Win → `WH_KEYBOARD_LL` hook in `win32/hooks.py` detects Ctrl+Win, suppresses Start Menu, posts `WM_APP+1` to message loop → `on_hotkey_down()` → `start_recording()` opens mic stream, saves `GetForegroundWindow()` as paste target (own overlay/panel windows filtered out), pill expands to active mode
+2. Release Win → `_wait_for_release()` polling thread detects key-up via `GetAsyncKeyState` → `stop_and_transcribe()` runs Whisper inference, restores foreground window, types text via `SendInput` Unicode events, pill returns to idle
 
 **Overlay (two modes):**
 - Idle: 160x44 toolbar with 3 clickable icon zones (info, model, settings). NOT click-through.
@@ -116,7 +117,7 @@ Settings persist to `config.json` (gitignored). Auto-detects GPU on first launch
 **Constants in `config.py`:**
 - `MODEL_NAME` — `"tiny"` default
 - `SAMPLE_RATE` — 16000 Hz
-- `HOTKEY` — Ctrl+Shift+Space
+- `HOTKEY` — Ctrl+Win (via `WH_KEYBOARD_LL` hook)
 - `SILENCE_RMS_THRESHOLD` — `0.015`
 - `SILENCE_DURATION` — `0.7s`
 - `MIN_CHUNK_DURATION` — `0.5s`
