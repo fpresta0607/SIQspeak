@@ -26,9 +26,13 @@ from siqspeak.config import (
     MODEL_NAME,
     MODEL_PANEL_HEADER_H,
     MODEL_PANEL_ROW_H,
+    PBT_APMRESUMEAUTOMATIC,
+    PBT_APMRESUMESUSPEND,
+    PBT_APMSUSPEND,
     SCRIPT_DIR,
-    VK_SPACE,
+    VK_LWIN,
     WM_HOTKEY,
+    WM_POWERBROADCAST,
     WM_TIMER,
     _load_config,
     device_settings,
@@ -69,10 +73,10 @@ def message_loop(state: AppState) -> None:
     """Unified Win32 message loop: hotkey + overlay animation + panel interaction."""
     user32 = ctypes.windll.user32
 
-    if not user32.RegisterHotKey(None, HOTKEY_ID, HOTKEY_MOD, VK_SPACE):
-        log.error("Failed to register hotkey Ctrl+Shift+Space (already in use?)")
+    if not user32.RegisterHotKey(None, HOTKEY_ID, HOTKEY_MOD, VK_LWIN):
+        log.error("Failed to register hotkey Ctrl+Win (already in use?)")
         return
-    log.info("Hotkey: hold Ctrl+Shift+Space to record, release to stop")
+    log.info("Hotkey: hold Ctrl+Win to record, release to transcribe")
 
     state.overlay_hwnd = _create_overlay_window(state)
     if not state.overlay_hwnd:
@@ -104,13 +108,16 @@ def message_loop(state: AppState) -> None:
     current_state = "idle"
     topmost_tick = 0
     was_model_loading = False
+    hotkey_registered = True
+    hotkey_reregister_at = 0.0  # epoch time to re-register hotkey after wake
 
     msg = ctypes.wintypes.MSG()
     while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
         if state.should_quit:
             if state.overlay_hwnd:
                 user32.KillTimer(None, timer_id)
-                user32.UnregisterHotKey(None, HOTKEY_ID)
+                if hotkey_registered:
+                    user32.UnregisterHotKey(None, HOTKEY_ID)
                 uninstall_mouse_hook(state)
                 _hide_all_panels(state)
                 _hide_welcome(state)
@@ -130,7 +137,32 @@ def message_loop(state: AppState) -> None:
         if msg.message == WM_HOTKEY:
             on_hotkey_down(state)
 
+        elif msg.message == WM_POWERBROADCAST:
+            if msg.wParam == PBT_APMSUSPEND:
+                # System going to sleep — unregister hotkey cleanly
+                if hotkey_registered:
+                    user32.UnregisterHotKey(None, HOTKEY_ID)
+                    hotkey_registered = False
+                    log.info("System suspending — hotkey unregistered")
+            elif msg.wParam in (PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND):
+                # System woke up — schedule hotkey re-registration via timer loop
+                # (delay 3s so Win32 subsystem fully settles before we register)
+                if not hotkey_registered:
+                    hotkey_reregister_at = time.time() + 3.0
+                    log.info("System resumed — hotkey re-registration scheduled in 3s")
+
         elif msg.message == WM_TIMER:
+            # Re-register hotkey after wake from sleep (must be on this thread)
+            if not hotkey_registered and hotkey_reregister_at > 0 and time.time() >= hotkey_reregister_at:
+                if user32.RegisterHotKey(None, HOTKEY_ID, HOTKEY_MOD, VK_LWIN):
+                    hotkey_registered = True
+                    hotkey_reregister_at = 0.0
+                    log.info("Hotkey re-registered after system resume")
+                else:
+                    # Win32 not ready yet — retry in 5s
+                    hotkey_reregister_at = time.time() + 5.0
+                    log.warning("Hotkey re-register failed after wake — retrying in 5s")
+
             target = state.overlay_target_state
 
             # State transition

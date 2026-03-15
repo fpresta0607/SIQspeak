@@ -71,11 +71,12 @@ DEFAULT_COMPUTE_TYPE = "int8"
 DEFAULT_HAS_CUDA = False
 
 # ---------------------------------------------------------------------------
-# Win32 hotkey: Ctrl+Shift+Space
+# Win32 hotkey: Ctrl+Win
 # ---------------------------------------------------------------------------
 HOTKEY_ID = 1
-HOTKEY_MOD = 0x0002 | 0x0004  # MOD_CONTROL | MOD_SHIFT
-VK_SPACE = 0x20
+HOTKEY_MOD = 0x0002 | 0x4000  # MOD_CONTROL | MOD_NOREPEAT
+VK_LWIN = 0x5B                # left Windows key (trigger key)
+VK_SPACE = 0x20               # kept for any other internal uses
 
 # ---------------------------------------------------------------------------
 # Color palette (matches dictate.ico: dark blue, cyan, gray, white)
@@ -178,6 +179,12 @@ _DRAG_THRESHOLD = 5
 # Win32 message constants
 WM_HOTKEY = 0x0312
 WM_TIMER = 0x0113
+WM_POWERBROADCAST = 0x0218
+
+# Power broadcast events
+PBT_APMSUSPEND = 0x0004          # system is suspending
+PBT_APMRESUMEAUTOMATIC = 0x0012  # system woke (possibly without user input)
+PBT_APMRESUMESUSPEND = 0x0007    # system woke due to user activity
 
 
 # ---------------------------------------------------------------------------

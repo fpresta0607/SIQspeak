@@ -35,9 +35,9 @@ def _render_welcome() -> np.ndarray:
             font_main = ImageFont.load_default()
         font_sub = font_main
 
-    # Main line: "Hold Ctrl+Shift+Space to dictate" with hotkey in cyan
+    # Main line: "Hold Ctrl+Win to dictate" with hotkey in cyan
     prefix = "Hold "
-    hotkey = "Ctrl+Shift+Space"
+    hotkey = "Ctrl+Win"
     suffix = " to dictate"
     x = 20
     y_main = 16

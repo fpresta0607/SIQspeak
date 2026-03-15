@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 
-from siqspeak.config import VK_SPACE
+from siqspeak.config import VK_LWIN
 from siqspeak.state import AppState
 
 log = logging.getLogger("siqspeak")
@@ -19,7 +19,7 @@ def quit_app(state: AppState, tray_icon) -> None:
 def _wait_for_release(state: AppState) -> None:
     """Poll until Space is released, then stop recording and transcribe."""
     user32 = ctypes.windll.user32
-    while user32.GetAsyncKeyState(VK_SPACE) & 0x8000:
+    while user32.GetAsyncKeyState(VK_LWIN) & 0x8000:
         time.sleep(0.05)
     try:
         from siqspeak.audio.recording import stop_and_transcribe

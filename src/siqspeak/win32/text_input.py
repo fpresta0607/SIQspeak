@@ -18,15 +18,14 @@ def type_text(text: str, release_modifiers: bool = True) -> None:
     user32 = ctypes.windll.user32
 
     if release_modifiers:
-        # Release held modifiers + Space (from Ctrl+Shift+Space hotkey).
-        # Space must be released too, otherwise when streaming types mid-hold
-        # the now-unmodified Space key produces a space character.
-        release = (INPUT * 4)()
-        for i, vk in enumerate((VK_CONTROL, 0x10, 0x12, 0x20)):
+        # Release held modifiers from Ctrl+Win hotkey before injecting text.
+        # 0x5B = VK_LWIN
+        release = (INPUT * 2)()
+        for i, vk in enumerate((VK_CONTROL, 0x5B)):
             release[i].type = INPUT_KEYBOARD
             release[i].ki.wVk = vk
             release[i].ki.dwFlags = KEYEVENTF_KEYUP
-        user32.SendInput(4, ctypes.pointer(release[0]), ctypes.sizeof(INPUT))
+        user32.SendInput(2, ctypes.pointer(release[0]), ctypes.sizeof(INPUT))
         time.sleep(0.05)
 
     # Send each character as a Unicode key down + key up pair
