@@ -15,13 +15,18 @@ def quit_app(state: AppState, tray_icon) -> None:
 
 
 def _wait_for_release(state: AppState) -> None:
-    """Poll until Win key is released, then stop recording and transcribe."""
+    """Poll until Win key is released, then enqueue audio for transcription."""
     from siqspeak.win32 import hooks
+    deadline = time.monotonic() + 5.0
     while hooks.win_held:
+        if time.monotonic() > deadline:
+            log.warning("Win key release not detected after 5s — forcing stop")
+            hooks.reset_keyboard_hook_state()
+            break
         time.sleep(0.05)
     try:
-        from siqspeak.audio.recording import stop_and_transcribe
-        stop_and_transcribe(state)
+        from siqspeak.audio.recording import stop_and_enqueue
+        stop_and_enqueue(state)
     finally:
         state.hotkey_busy = False
 

@@ -105,6 +105,13 @@ _win_suppressed: bool = False
 win_held: bool = False
 
 
+def reset_keyboard_hook_state() -> None:
+    """Reset hook tracking flags — call when reinstalling the keyboard hook."""
+    global _win_suppressed, win_held
+    _win_suppressed = False
+    win_held = False
+
+
 def _keyboard_hook_proc(nCode, wParam, lParam):
     global _win_suppressed, win_held
     try:
@@ -114,6 +121,8 @@ def _keyboard_hook_proc(nCode, wParam, lParam):
             is_win = vk in (VK_LWIN, VK_RWIN)
 
             if is_win and wParam in (WM_KEYDOWN, WM_SYSKEYDOWN):
+                if _win_suppressed:
+                    return 1  # Already in Ctrl+Win cycle — suppress repeats
                 # Check if Ctrl is currently held
                 user32 = ctypes.windll.user32
                 ctrl_down = user32.GetAsyncKeyState(VK_CONTROL) & 0x8000

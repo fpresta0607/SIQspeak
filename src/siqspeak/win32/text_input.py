@@ -18,14 +18,14 @@ def type_text(text: str, release_modifiers: bool = True) -> None:
     user32 = ctypes.windll.user32
 
     if release_modifiers:
-        # Release held modifiers from Ctrl+Win hotkey before injecting text.
-        # 0x5B = VK_LWIN
-        release = (INPUT * 2)()
-        for i, vk in enumerate((VK_CONTROL, 0x5B)):
-            release[i].type = INPUT_KEYBOARD
-            release[i].ki.wVk = vk
-            release[i].ki.dwFlags = KEYEVENTF_KEYUP
-        user32.SendInput(2, ctypes.pointer(release[0]), ctypes.sizeof(INPUT))
+        # Release Ctrl before injecting text. Win key is already suppressed
+        # by the keyboard hook — sending an orphaned VK_LWIN key-up can
+        # trigger Start Menu on some Windows versions.
+        release = (INPUT * 1)()
+        release[0].type = INPUT_KEYBOARD
+        release[0].ki.wVk = VK_CONTROL
+        release[0].ki.dwFlags = KEYEVENTF_KEYUP
+        user32.SendInput(1, ctypes.pointer(release[0]), ctypes.sizeof(INPUT))
         time.sleep(0.05)
 
     # Send each character as a Unicode key down + key up pair
