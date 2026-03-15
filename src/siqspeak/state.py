@@ -112,5 +112,6 @@ class AppState:
     hf_auth_success_time: float = 0.0
     hf_pending_model: str | None = None  # model to download after auth
 
-    # Mouse hook
+    # Hooks
     mouse_hook: int | None = None
+    keyboard_hook: int | None = None
