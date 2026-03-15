@@ -18,21 +18,13 @@ from siqspeak.config import (
     ACTIVE_H,
     ACTIVE_W,
     AVAILABLE_MODELS,
-    HOTKEY_ID,
-    HOTKEY_MOD,
     IDLE_H,
     IDLE_W,
     LOG_PANEL_MAX_VISIBLE,
     MODEL_NAME,
     MODEL_PANEL_HEADER_H,
     MODEL_PANEL_ROW_H,
-    PBT_APMRESUMEAUTOMATIC,
-    PBT_APMRESUMESUSPEND,
-    PBT_APMSUSPEND,
     SCRIPT_DIR,
-    VK_LWIN,
-    WM_HOTKEY,
-    WM_POWERBROADCAST,
     WM_TIMER,
     _load_config,
     device_settings,
@@ -59,7 +51,12 @@ from siqspeak.overlay.rendering import _build_idle_frame, _render_frame
 from siqspeak.state import AppState
 from siqspeak.tray import make_icon
 from siqspeak.win32.dpi import enable_dpi_awareness
-from siqspeak.win32.hooks import install_mouse_hook, uninstall_mouse_hook
+from siqspeak.win32.hooks import (
+    install_keyboard_hook,
+    install_mouse_hook,
+    uninstall_keyboard_hook,
+    uninstall_mouse_hook,
+)
 from siqspeak.win32.window import (
     _create_overlay_window,
     _create_panel_window,
@@ -72,9 +69,11 @@ log = logging.getLogger("siqspeak")
 def message_loop(state: AppState) -> None:
     """Unified Win32 message loop: hotkey + overlay animation + panel interaction."""
     user32 = ctypes.windll.user32
+    WM_APP_HOTKEY = 0x8001  # custom message posted by keyboard hook
 
-    if not user32.RegisterHotKey(None, HOTKEY_ID, HOTKEY_MOD, VK_LWIN):
-        log.error("Failed to register hotkey Ctrl+Win (already in use?)")
+    install_keyboard_hook(state)
+    if not state.keyboard_hook:
+        log.error("Failed to install keyboard hook for Ctrl+Win hotkey")
         return
     log.info("Hotkey: hold Ctrl+Win to record, release to transcribe")
 
@@ -108,16 +107,13 @@ def message_loop(state: AppState) -> None:
     current_state = "idle"
     topmost_tick = 0
     was_model_loading = False
-    hotkey_registered = True
-    hotkey_reregister_at = 0.0  # epoch time to re-register hotkey after wake
 
     msg = ctypes.wintypes.MSG()
     while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
         if state.should_quit:
             if state.overlay_hwnd:
                 user32.KillTimer(None, timer_id)
-                if hotkey_registered:
-                    user32.UnregisterHotKey(None, HOTKEY_ID)
+                uninstall_keyboard_hook(state)
                 uninstall_mouse_hook(state)
                 _hide_all_panels(state)
                 _hide_welcome(state)
@@ -134,35 +130,10 @@ def message_loop(state: AppState) -> None:
                 user32.PostQuitMessage(0)
             break
 
-        if msg.message == WM_HOTKEY:
+        if msg.message == WM_APP_HOTKEY:
             on_hotkey_down(state)
 
-        elif msg.message == WM_POWERBROADCAST:
-            if msg.wParam == PBT_APMSUSPEND:
-                # System going to sleep — unregister hotkey cleanly
-                if hotkey_registered:
-                    user32.UnregisterHotKey(None, HOTKEY_ID)
-                    hotkey_registered = False
-                    log.info("System suspending — hotkey unregistered")
-            elif msg.wParam in (PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND):
-                # System woke up — schedule hotkey re-registration via timer loop
-                # (delay 3s so Win32 subsystem fully settles before we register)
-                if not hotkey_registered:
-                    hotkey_reregister_at = time.time() + 3.0
-                    log.info("System resumed — hotkey re-registration scheduled in 3s")
-
         elif msg.message == WM_TIMER:
-            # Re-register hotkey after wake from sleep (must be on this thread)
-            if not hotkey_registered and hotkey_reregister_at > 0 and time.time() >= hotkey_reregister_at:
-                if user32.RegisterHotKey(None, HOTKEY_ID, HOTKEY_MOD, VK_LWIN):
-                    hotkey_registered = True
-                    hotkey_reregister_at = 0.0
-                    log.info("Hotkey re-registered after system resume")
-                else:
-                    # Win32 not ready yet — retry in 5s
-                    hotkey_reregister_at = time.time() + 5.0
-                    log.warning("Hotkey re-register failed after wake — retrying in 5s")
-
             target = state.overlay_target_state
 
             # State transition
@@ -390,4 +361,5 @@ def main() -> None:
     try:
         message_loop(state)
     finally:
+        uninstall_keyboard_hook(state)
         uninstall_mouse_hook(state)

@@ -71,12 +71,11 @@ DEFAULT_COMPUTE_TYPE = "int8"
 DEFAULT_HAS_CUDA = False
 
 # ---------------------------------------------------------------------------
-# Win32 hotkey: Ctrl+Win
+# Win32 hotkey: Ctrl+Win (via low-level keyboard hook)
 # ---------------------------------------------------------------------------
-HOTKEY_ID = 1
-HOTKEY_MOD = 0x0002 | 0x4000  # MOD_CONTROL | MOD_NOREPEAT
-VK_LWIN = 0x5B                # left Windows key (trigger key)
-VK_SPACE = 0x20               # kept for any other internal uses
+VK_LWIN = 0x5B             # left Windows key
+VK_RWIN = 0x5C             # right Windows key
+VK_CONTROL = 0x11          # either Ctrl key
 
 # ---------------------------------------------------------------------------
 # Color palette (matches dictate.ico: dark blue, cyan, gray, white)
@@ -160,6 +159,9 @@ SETTINGS_HEADER_H = 52
 # Log panel rendering
 LOG_HEADER_H = 72
 LOG_COPY_BTN_W = 48
+LOG_COPY_VISUAL_W = 38    # btn_hw * 2 — actual rendered button width
+LOG_COPY_BTN_HH = 18      # half-height of visual button
+LOG_COPY_HOVER_PAD = 5    # comfort padding around button for hover/click
 LOG_TEXT_LEFT = 90
 LOG_LINE_H = 28
 
@@ -177,14 +179,7 @@ _ZONE_PANEL = {0: "info", 1: "model", 2: "settings"}
 _DRAG_THRESHOLD = 5
 
 # Win32 message constants
-WM_HOTKEY = 0x0312
 WM_TIMER = 0x0113
-WM_POWERBROADCAST = 0x0218
-
-# Power broadcast events
-PBT_APMSUSPEND = 0x0004          # system is suspending
-PBT_APMRESUMEAUTOMATIC = 0x0012  # system woke (possibly without user input)
-PBT_APMRESUMESUSPEND = 0x0007    # system woke due to user activity
 
 
 # ---------------------------------------------------------------------------
