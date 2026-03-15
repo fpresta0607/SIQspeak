@@ -8,7 +8,10 @@ import time
 import pyperclip
 
 from siqspeak.config import (
+    LOG_COPY_BTN_HH,
     LOG_COPY_BTN_W,
+    LOG_COPY_HOVER_PAD,
+    LOG_COPY_VISUAL_W,
     LOG_HEADER_H,
     LOG_PANEL_MAX_VISIBLE,
     LOG_PANEL_PADDING,
@@ -48,20 +51,26 @@ def _update_copy_hover(state: AppState) -> None:
     rx = pt.x - rect.left
     ry = pt.y - rect.top
 
-    # Check if cursor is in the copy button column
+    # Check if cursor is in the copy button column (aligned to visual button)
     panel_w, _ = _log_panel_dims()
     copy_x = panel_w - LOG_COPY_BTN_W - 8
-    if rx < copy_x or rx > copy_x + LOG_COPY_BTN_W:
+    btn_left = copy_x - LOG_COPY_HOVER_PAD
+    btn_right = copy_x + LOG_COPY_VISUAL_W + LOG_COPY_HOVER_PAD
+    if rx < btn_left or rx > btn_right:
         state.copy_hover_row = None
         return
 
-    # Walk variable-height rows
+    # Walk variable-height rows with vertical button bounds check
     y_acc = LOG_HEADER_H + LOG_PANEL_PADDING
     entries_count = min(len(state.transcription_log), LOG_PANEL_MAX_VISIBLE)
     for idx, entry_h in enumerate(state.log_entry_heights):
         if idx >= entries_count:
             break
         if y_acc <= ry < y_acc + entry_h:
+            btn_cy = y_acc + entry_h // 2
+            if abs(ry - btn_cy) > LOG_COPY_BTN_HH + LOG_COPY_HOVER_PAD:
+                state.copy_hover_row = None
+                return
             state.copy_hover_row = idx
             return
         y_acc += entry_h
@@ -89,10 +98,12 @@ def _handle_copy_click(state: AppState) -> None:
     rx = pt.x - rect.left
     ry = pt.y - rect.top
 
-    # Check if in copy button column (right edge of panel)
+    # Check if in copy button column (aligned to visual button)
     panel_w, _ = _log_panel_dims()
     copy_x = panel_w - LOG_COPY_BTN_W - 8
-    if rx < copy_x or rx > copy_x + LOG_COPY_BTN_W:
+    btn_left = copy_x - LOG_COPY_HOVER_PAD
+    btn_right = copy_x + LOG_COPY_VISUAL_W + LOG_COPY_HOVER_PAD
+    if rx < btn_left or rx > btn_right:
         return
 
     # Walk variable-height rows to find which entry was clicked (scroll-aware)

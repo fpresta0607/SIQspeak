@@ -24,6 +24,7 @@ from siqspeak.config import (
     SILENCE_RMS_THRESHOLD,
 )
 from siqspeak.state import AppState
+from siqspeak.text_processing import postprocess_transcription
 from siqspeak.tray import set_state
 from siqspeak.win32.text_input import focus_window, type_text
 
@@ -254,6 +255,7 @@ def _stop_and_transcribe_batch(state: AppState) -> None:
         log.info("TRANSCRIBE %.3fs -> %s", elapsed, text)
 
         if text:
+            text = postprocess_transcription(text)
             entry = {
                 "text": text,
                 "timestamp": time.strftime("%H:%M:%S"),
