@@ -88,6 +88,9 @@ class AppState:
     model_loading_start: float = 0.0
     model_loading_is_download: bool = False
 
+    # Transcription worker
+    transcription_queue: queue.Queue | None = None
+
     # Streaming
     stream_mode: bool = False
     stream_queue: queue.Queue | None = None

@@ -13,7 +13,7 @@ from pystray import Icon, Menu, MenuItem
 
 from siqspeak._frozen import bundled_model_path
 from siqspeak.audio.devices import _get_input_devices
-from siqspeak.audio.recording import _load_log
+from siqspeak.audio.recording import _load_log, transcription_worker_loop
 from siqspeak.config import (
     ACTIVE_H,
     ACTIVE_W,
@@ -42,8 +42,8 @@ from siqspeak.interaction.hover import (
     _update_copy_hover,
 )
 from siqspeak.logging_setup import configure_logging
-from siqspeak.overlay.panels import _hide_all_panels
-from siqspeak.overlay.panels.log_panel import _show_log_panel
+from siqspeak.overlay.panels import _hide_all_panels, _update_panel_content
+from siqspeak.overlay.panels.log_panel import _render_log_panel, _show_log_panel
 from siqspeak.overlay.panels.model_panel import _render_model_panel
 from siqspeak.overlay.panels.welcome import _hide_welcome, _show_welcome
 from siqspeak.overlay.pill import _set_pill_mode
@@ -189,7 +189,9 @@ def message_loop(state: AppState) -> None:
                         state.copied_row = None
                         needs_rerender = True
                     if needs_rerender:
-                        _show_log_panel(state)
+                        # Content-only update — skip SetWindowPos to avoid flicker
+                        buf, pw, ph = _render_log_panel(state)
+                        _update_panel_content(state.log_panel_hwnd, buf, pw, ph)
 
                 elif state.active_panel == "model":
                     _handle_model_click(state)
@@ -292,6 +294,7 @@ def message_loop(state: AppState) -> None:
                         )
 
 
+
 def main() -> None:
     """Application entry point."""
     enable_dpi_awareness()
@@ -350,6 +353,13 @@ def main() -> None:
             log.exception("Failed to load Whisper model")
             sys.exit(1)
     log.info("Model ready in %.2fs", time.perf_counter() - t0)
+
+    # Async transcription worker — hotkey enqueues audio, worker transcribes + types
+    import queue as _queue
+    state.transcription_queue = _queue.Queue()
+    threading.Thread(
+        target=transcription_worker_loop, args=(state,), daemon=True,
+    ).start()
 
     menu = Menu(MenuItem("Quit", lambda tray_icon: quit_app(state, tray_icon)))
     state.icon = Icon("SIQspeak", make_icon("gray"), "SIQspeak", menu)
