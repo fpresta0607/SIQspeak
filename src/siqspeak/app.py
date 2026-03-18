@@ -66,10 +66,52 @@ from siqspeak.win32.window import (
 log = logging.getLogger("siqspeak")
 
 
+def _recover_after_sleep(state: AppState) -> None:
+    """Reinstall Win32 hooks and reset stuck recording state after sleep/wake."""
+    log.info("System resumed from sleep — recovering hooks and state")
+
+    # If recording was in progress when the machine slept, clean it up
+    if state.is_recording:
+        state.is_recording = False
+        if state.mic_stream:
+            try:
+                state.mic_stream.stop()
+                state.mic_stream.close()
+            except Exception:
+                pass
+            state.mic_stream = None
+        state.audio_chunks = []
+
+    # Release stuck hotkey flags (win_held can stay True if hook died mid-press)
+    from siqspeak.win32 import hooks as _hooks
+    _hooks.win_held = False
+    _hooks._win_suppressed = False
+    state.hotkey_busy = False
+    from siqspeak.tray import set_state as _set_state
+    _set_state(state, "idle")
+
+    # Reinstall keyboard hook
+    uninstall_keyboard_hook(state)
+    install_keyboard_hook(state)
+    if state.keyboard_hook:
+        log.info("Keyboard hook reinstalled after sleep")
+    else:
+        log.error("Failed to reinstall keyboard hook after sleep")
+
+    # Reinstall mouse hook
+    uninstall_mouse_hook(state)
+    install_mouse_hook(state)
+    if state.mouse_hook:
+        log.info("Mouse hook reinstalled after sleep")
+
+
 def message_loop(state: AppState) -> None:
     """Unified Win32 message loop: hotkey + overlay animation + panel interaction."""
     user32 = ctypes.windll.user32
     WM_APP_HOTKEY = 0x8001  # custom message posted by keyboard hook
+    WM_POWERBROADCAST = 0x0218
+    PBT_APMRESUMEAUTOMATIC = 0x12  # system auto-resumed (e.g. scheduled wake)
+    PBT_APMRESUMESUSPEND = 0x7     # user-initiated resume from suspend
 
     install_keyboard_hook(state)
     if not state.keyboard_hook:
@@ -132,6 +174,10 @@ def message_loop(state: AppState) -> None:
 
         if msg.message == WM_APP_HOTKEY:
             on_hotkey_down(state)
+
+        elif msg.message == WM_POWERBROADCAST:
+            if msg.wParam in (PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND):
+                _recover_after_sleep(state)
 
         elif msg.message == WM_TIMER:
             target = state.overlay_target_state
@@ -297,6 +343,20 @@ def message_loop(state: AppState) -> None:
 
 def main() -> None:
     """Application entry point."""
+    # Single-instance guard: prevent multiple copies running at the same time.
+    # CreateMutexW returns a handle even if it already exists; GetLastError()
+    # returns ERROR_ALREADY_EXISTS (183) in that case.
+    _MUTEX_NAME = "Global\\SIQspeak_SingleInstance_v1"
+    _app_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, _MUTEX_NAME)
+    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            "SIQspeak is already running.\nCheck the system tray to access it.",
+            "SIQspeak",
+            0x40 | 0x1000,  # MB_ICONINFORMATION | MB_SETFOREGROUND
+        )
+        sys.exit(0)
+
     enable_dpi_awareness()
     configure_logging(SCRIPT_DIR)
 
