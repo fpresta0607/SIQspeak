@@ -326,13 +326,13 @@ def message_loop(state: AppState) -> None:
                 _hide_welcome(state)
 
             # Topmost re-assertion every ~0.3 seconds (10 ticks at 33ms)
-            # More frequent than 1s to stay above aggressive apps
+            # More frequent than 1s to stay above aggressive apps.
+            # Panels are excluded: they're already TOPMOST and calling SetWindowPos
+            # on a window while the cursor hovers over it causes a visible mouse stutter.
             topmost_tick += 1
             if topmost_tick >= 10:
                 topmost_tick = 0
-                for hwnd in (state.overlay_hwnd, state.log_panel_hwnd,
-                             state.model_panel_hwnd, state.settings_panel_hwnd,
-                             state.welcome_hwnd):
+                for hwnd in (state.overlay_hwnd, state.welcome_hwnd):
                     if hwnd and user32.IsWindowVisible(hwnd):
                         user32.SetWindowPos(
                             hwnd, HWND_TOPMOST, 0, 0, 0, 0,
