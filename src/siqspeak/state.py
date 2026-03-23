@@ -75,6 +75,7 @@ class AppState:
     # Hotkey / control
     should_quit: bool = False
     hotkey_busy: bool = False
+    recording_start_time: float = 0.0  # epoch — used for timer-loop safety valve
 
     # Debounce
     idle_click_debounce: bool = False

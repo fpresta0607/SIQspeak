@@ -139,7 +139,22 @@ def message_loop(state: AppState) -> None:
 
         elif msg.message == WM_POWERBROADCAST:
             if msg.wParam == PBT_APMSUSPEND:
-                # System going to sleep — unregister hotkey cleanly
+                # System going to sleep — stop any live recording first so
+                # audio_chunks doesn't accumulate across resume cycles.
+                if state.is_recording:
+                    log.info("System suspending during active recording — force stopping")
+                    state.is_recording = False
+                    if state.mic_stream:
+                        try:
+                            state.mic_stream.stop()
+                            state.mic_stream.close()
+                        except Exception:
+                            pass
+                        state.mic_stream = None
+                    state.audio_chunks = []
+                    state.hotkey_busy = False
+                    state.overlay_target_state = "idle"
+                # Unregister hotkey cleanly
                 if hotkey_registered:
                     user32.UnregisterHotKey(None, HOTKEY_ID)
                     hotkey_registered = False
@@ -162,6 +177,27 @@ def message_loop(state: AppState) -> None:
                     # Win32 not ready yet — retry in 5s
                     hotkey_reregister_at = time.time() + 5.0
                     log.warning("Hotkey re-register failed after wake — retrying in 5s")
+
+            # ── Safety valve: kill runaway recording (stuck key state) ───────
+            # Guards the case where _wait_for_release's timeout fires but
+            # the thread was slow to start transcription.
+            from siqspeak.hotkey import MAX_RECORDING_SECS
+            if (state.is_recording
+                    and state.recording_start_time > 0
+                    and time.time() - state.recording_start_time > MAX_RECORDING_SECS + 5):
+                log.warning("Timer-loop safety valve: recording exceeded %.0fs — force stopping",
+                            MAX_RECORDING_SECS + 5)
+                state.is_recording = False
+                if state.mic_stream:
+                    try:
+                        state.mic_stream.stop()
+                        state.mic_stream.close()
+                    except Exception:
+                        pass
+                    state.mic_stream = None
+                state.audio_chunks = []
+                state.hotkey_busy = False
+                state.overlay_target_state = "idle"
 
             target = state.overlay_target_state
 

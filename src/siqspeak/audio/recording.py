@@ -102,6 +102,7 @@ def start_recording(state: AppState) -> None:
     state.current_level = 0.0
     state.display_level = 0.0
     state.audio_chunks = []
+    state.recording_start_time = time.time()
 
     # Compute silence threshold in callback count from SILENCE_DURATION.
     # sounddevice default blocksize at 16 kHz ~= 512 frames (~32ms per callback).
@@ -219,6 +220,7 @@ def _stop_and_transcribe_batch(state: AppState) -> None:
             return
 
         audio = np.concatenate(state.audio_chunks)
+        state.audio_chunks = []  # free immediately — don't wait until next recording
         duration = len(audio) / SAMPLE_RATE
         log.info("REC STOP -- %.1fs captured", duration)
 
