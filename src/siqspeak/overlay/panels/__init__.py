@@ -11,6 +11,13 @@ from siqspeak.state import AppState
 from siqspeak.win32.window import _update_layered_window
 
 
+def _update_panel_content(hwnd: int, buf: np.ndarray, pw: int, ph: int) -> None:
+    """Update panel pixel content without repositioning — avoids flicker on hover."""
+    if not hwnd:
+        return
+    _update_layered_window(hwnd, buf, pw, ph)
+
+
 def _show_panel_window(state: AppState, hwnd: int, buf: np.ndarray, pw: int, ph: int) -> None:
     """Position a panel window above the pill and show it."""
     if not hwnd or not state.overlay_hwnd:

@@ -89,6 +89,9 @@ class AppState:
     model_loading_start: float = 0.0
     model_loading_is_download: bool = False
 
+    # Transcription worker
+    transcription_queue: queue.Queue | None = None
+
     # Streaming
     stream_mode: bool = False
     stream_queue: queue.Queue | None = None
@@ -113,5 +116,6 @@ class AppState:
     hf_auth_success_time: float = 0.0
     hf_pending_model: str | None = None  # model to download after auth
 
-    # Mouse hook
+    # Hooks
     mouse_hook: int | None = None
+    keyboard_hook: int | None = None

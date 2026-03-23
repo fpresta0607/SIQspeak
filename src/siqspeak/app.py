@@ -13,26 +13,18 @@ from pystray import Icon, Menu, MenuItem
 
 from siqspeak._frozen import bundled_model_path
 from siqspeak.audio.devices import _get_input_devices
-from siqspeak.audio.recording import _load_log
+from siqspeak.audio.recording import _load_log, transcription_worker_loop
 from siqspeak.config import (
     ACTIVE_H,
     ACTIVE_W,
     AVAILABLE_MODELS,
-    HOTKEY_ID,
-    HOTKEY_MOD,
     IDLE_H,
     IDLE_W,
     LOG_PANEL_MAX_VISIBLE,
     MODEL_NAME,
     MODEL_PANEL_HEADER_H,
     MODEL_PANEL_ROW_H,
-    PBT_APMRESUMEAUTOMATIC,
-    PBT_APMRESUMESUSPEND,
-    PBT_APMSUSPEND,
     SCRIPT_DIR,
-    VK_LWIN,
-    WM_HOTKEY,
-    WM_POWERBROADCAST,
     WM_TIMER,
     _load_config,
     device_settings,
@@ -50,8 +42,8 @@ from siqspeak.interaction.hover import (
     _update_copy_hover,
 )
 from siqspeak.logging_setup import configure_logging
-from siqspeak.overlay.panels import _hide_all_panels
-from siqspeak.overlay.panels.log_panel import _show_log_panel
+from siqspeak.overlay.panels import _hide_all_panels, _update_panel_content
+from siqspeak.overlay.panels.log_panel import _render_log_panel, _show_log_panel
 from siqspeak.overlay.panels.model_panel import _render_model_panel
 from siqspeak.overlay.panels.welcome import _hide_welcome, _show_welcome
 from siqspeak.overlay.pill import _set_pill_mode
@@ -59,7 +51,12 @@ from siqspeak.overlay.rendering import _build_idle_frame, _render_frame
 from siqspeak.state import AppState
 from siqspeak.tray import make_icon
 from siqspeak.win32.dpi import enable_dpi_awareness
-from siqspeak.win32.hooks import install_mouse_hook, uninstall_mouse_hook
+from siqspeak.win32.hooks import (
+    install_keyboard_hook,
+    install_mouse_hook,
+    uninstall_keyboard_hook,
+    uninstall_mouse_hook,
+)
 from siqspeak.win32.window import (
     _create_overlay_window,
     _create_panel_window,
@@ -69,12 +66,56 @@ from siqspeak.win32.window import (
 log = logging.getLogger("siqspeak")
 
 
+def _recover_after_sleep(state: AppState) -> None:
+    """Reinstall Win32 hooks and reset stuck recording state after sleep/wake."""
+    log.info("System resumed from sleep — recovering hooks and state")
+
+    # If recording was in progress when the machine slept, clean it up
+    if state.is_recording:
+        state.is_recording = False
+        if state.mic_stream:
+            try:
+                state.mic_stream.stop()
+                state.mic_stream.close()
+            except Exception:
+                pass
+            state.mic_stream = None
+        state.audio_chunks = []
+
+    # Release stuck hotkey flags (win_held can stay True if hook died mid-press)
+    from siqspeak.win32 import hooks as _hooks
+    _hooks.win_held = False
+    _hooks._win_suppressed = False
+    state.hotkey_busy = False
+    from siqspeak.tray import set_state as _set_state
+    _set_state(state, "idle")
+
+    # Reinstall keyboard hook
+    uninstall_keyboard_hook(state)
+    install_keyboard_hook(state)
+    if state.keyboard_hook:
+        log.info("Keyboard hook reinstalled after sleep")
+    else:
+        log.error("Failed to reinstall keyboard hook after sleep")
+
+    # Reinstall mouse hook
+    uninstall_mouse_hook(state)
+    install_mouse_hook(state)
+    if state.mouse_hook:
+        log.info("Mouse hook reinstalled after sleep")
+
+
 def message_loop(state: AppState) -> None:
     """Unified Win32 message loop: hotkey + overlay animation + panel interaction."""
     user32 = ctypes.windll.user32
+    WM_APP_HOTKEY = 0x8001  # custom message posted by keyboard hook
+    WM_POWERBROADCAST = 0x0218
+    PBT_APMRESUMEAUTOMATIC = 0x12  # system auto-resumed (e.g. scheduled wake)
+    PBT_APMRESUMESUSPEND = 0x7     # user-initiated resume from suspend
 
-    if not user32.RegisterHotKey(None, HOTKEY_ID, HOTKEY_MOD, VK_LWIN):
-        log.error("Failed to register hotkey Ctrl+Win (already in use?)")
+    install_keyboard_hook(state)
+    if not state.keyboard_hook:
+        log.error("Failed to install keyboard hook for Ctrl+Win hotkey")
         return
     log.info("Hotkey: hold Ctrl+Win to record, release to transcribe")
 
@@ -108,16 +149,13 @@ def message_loop(state: AppState) -> None:
     current_state = "idle"
     topmost_tick = 0
     was_model_loading = False
-    hotkey_registered = True
-    hotkey_reregister_at = 0.0  # epoch time to re-register hotkey after wake
 
     msg = ctypes.wintypes.MSG()
     while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
         if state.should_quit:
             if state.overlay_hwnd:
                 user32.KillTimer(None, timer_id)
-                if hotkey_registered:
-                    user32.UnregisterHotKey(None, HOTKEY_ID)
+                uninstall_keyboard_hook(state)
                 uninstall_mouse_hook(state)
                 _hide_all_panels(state)
                 _hide_welcome(state)
@@ -134,71 +172,14 @@ def message_loop(state: AppState) -> None:
                 user32.PostQuitMessage(0)
             break
 
-        if msg.message == WM_HOTKEY:
+        if msg.message == WM_APP_HOTKEY:
             on_hotkey_down(state)
 
         elif msg.message == WM_POWERBROADCAST:
-            if msg.wParam == PBT_APMSUSPEND:
-                # System going to sleep — stop any live recording first so
-                # audio_chunks doesn't accumulate across resume cycles.
-                if state.is_recording:
-                    log.info("System suspending during active recording — force stopping")
-                    state.is_recording = False
-                    if state.mic_stream:
-                        try:
-                            state.mic_stream.stop()
-                            state.mic_stream.close()
-                        except Exception:
-                            pass
-                        state.mic_stream = None
-                    state.audio_chunks = []
-                    state.hotkey_busy = False
-                    state.overlay_target_state = "idle"
-                # Unregister hotkey cleanly
-                if hotkey_registered:
-                    user32.UnregisterHotKey(None, HOTKEY_ID)
-                    hotkey_registered = False
-                    log.info("System suspending — hotkey unregistered")
-            elif msg.wParam in (PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND):
-                # System woke up — schedule hotkey re-registration via timer loop
-                # (delay 3s so Win32 subsystem fully settles before we register)
-                if not hotkey_registered:
-                    hotkey_reregister_at = time.time() + 3.0
-                    log.info("System resumed — hotkey re-registration scheduled in 3s")
+            if msg.wParam in (PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND):
+                _recover_after_sleep(state)
 
         elif msg.message == WM_TIMER:
-            # Re-register hotkey after wake from sleep (must be on this thread)
-            if not hotkey_registered and hotkey_reregister_at > 0 and time.time() >= hotkey_reregister_at:
-                if user32.RegisterHotKey(None, HOTKEY_ID, HOTKEY_MOD, VK_LWIN):
-                    hotkey_registered = True
-                    hotkey_reregister_at = 0.0
-                    log.info("Hotkey re-registered after system resume")
-                else:
-                    # Win32 not ready yet — retry in 5s
-                    hotkey_reregister_at = time.time() + 5.0
-                    log.warning("Hotkey re-register failed after wake — retrying in 5s")
-
-            # ── Safety valve: kill runaway recording (stuck key state) ───────
-            # Guards the case where _wait_for_release's timeout fires but
-            # the thread was slow to start transcription.
-            from siqspeak.hotkey import MAX_RECORDING_SECS
-            if (state.is_recording
-                    and state.recording_start_time > 0
-                    and time.time() - state.recording_start_time > MAX_RECORDING_SECS + 5):
-                log.warning("Timer-loop safety valve: recording exceeded %.0fs — force stopping",
-                            MAX_RECORDING_SECS + 5)
-                state.is_recording = False
-                if state.mic_stream:
-                    try:
-                        state.mic_stream.stop()
-                        state.mic_stream.close()
-                    except Exception:
-                        pass
-                    state.mic_stream = None
-                state.audio_chunks = []
-                state.hotkey_busy = False
-                state.overlay_target_state = "idle"
-
             target = state.overlay_target_state
 
             # State transition
@@ -254,7 +235,9 @@ def message_loop(state: AppState) -> None:
                         state.copied_row = None
                         needs_rerender = True
                     if needs_rerender:
-                        _show_log_panel(state)
+                        # Content-only update — skip SetWindowPos to avoid flicker
+                        buf, pw, ph = _render_log_panel(state)
+                        _update_panel_content(state.log_panel_hwnd, buf, pw, ph)
 
                 elif state.active_panel == "model":
                     _handle_model_click(state)
@@ -343,13 +326,13 @@ def message_loop(state: AppState) -> None:
                 _hide_welcome(state)
 
             # Topmost re-assertion every ~0.3 seconds (10 ticks at 33ms)
-            # More frequent than 1s to stay above aggressive apps
+            # More frequent than 1s to stay above aggressive apps.
+            # Panels are excluded: they're already TOPMOST and calling SetWindowPos
+            # on a window while the cursor hovers over it causes a visible mouse stutter.
             topmost_tick += 1
             if topmost_tick >= 10:
                 topmost_tick = 0
-                for hwnd in (state.overlay_hwnd, state.log_panel_hwnd,
-                             state.model_panel_hwnd, state.settings_panel_hwnd,
-                             state.welcome_hwnd):
+                for hwnd in (state.overlay_hwnd, state.welcome_hwnd):
                     if hwnd and user32.IsWindowVisible(hwnd):
                         user32.SetWindowPos(
                             hwnd, HWND_TOPMOST, 0, 0, 0, 0,
@@ -357,8 +340,23 @@ def message_loop(state: AppState) -> None:
                         )
 
 
+
 def main() -> None:
     """Application entry point."""
+    # Single-instance guard: prevent multiple copies running at the same time.
+    # CreateMutexW returns a handle even if it already exists; GetLastError()
+    # returns ERROR_ALREADY_EXISTS (183) in that case.
+    _MUTEX_NAME = "Global\\SIQspeak_SingleInstance_v1"
+    _app_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, _MUTEX_NAME)
+    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            "SIQspeak is already running.\nCheck the system tray to access it.",
+            "SIQspeak",
+            0x40 | 0x1000,  # MB_ICONINFORMATION | MB_SETFOREGROUND
+        )
+        sys.exit(0)
+
     enable_dpi_awareness()
     configure_logging(SCRIPT_DIR)
 
@@ -416,6 +414,13 @@ def main() -> None:
             sys.exit(1)
     log.info("Model ready in %.2fs", time.perf_counter() - t0)
 
+    # Async transcription worker — hotkey enqueues audio, worker transcribes + types
+    import queue as _queue
+    state.transcription_queue = _queue.Queue()
+    threading.Thread(
+        target=transcription_worker_loop, args=(state,), daemon=True,
+    ).start()
+
     menu = Menu(MenuItem("Quit", lambda tray_icon: quit_app(state, tray_icon)))
     state.icon = Icon("SIQspeak", make_icon("gray"), "SIQspeak", menu)
 
@@ -426,4 +431,5 @@ def main() -> None:
     try:
         message_loop(state)
     finally:
+        uninstall_keyboard_hook(state)
         uninstall_mouse_hook(state)

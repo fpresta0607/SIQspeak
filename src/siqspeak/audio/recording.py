@@ -24,6 +24,7 @@ from siqspeak.config import (
     SILENCE_RMS_THRESHOLD,
 )
 from siqspeak.state import AppState
+from siqspeak.text_processing import postprocess_transcription
 from siqspeak.tray import set_state
 from siqspeak.win32.text_input import focus_window, type_text
 
@@ -102,7 +103,6 @@ def start_recording(state: AppState) -> None:
     state.current_level = 0.0
     state.display_level = 0.0
     state.audio_chunks = []
-    state.recording_start_time = time.time()
 
     # Compute silence threshold in callback count from SILENCE_DURATION.
     # sounddevice default blocksize at 16 kHz ~= 512 frames (~32ms per callback).
@@ -189,8 +189,12 @@ def start_recording(state: AppState) -> None:
     log.info("REC START (stream=%s)", streaming)
 
 
-def stop_and_transcribe(state: AppState) -> None:
-    """Stop mic and route to batch or streaming transcription."""
+def stop_and_enqueue(state: AppState) -> None:
+    """Stop mic and enqueue audio for async transcription.
+
+    Returns immediately — transcription runs on the background worker thread.
+    Streaming mode is routed to its own existing worker instead.
+    """
     if not state.is_recording:
         return
     state.is_recording = False
@@ -206,83 +210,104 @@ def stop_and_transcribe(state: AppState) -> None:
 
     if state.stream_mode and state.stream_queue:
         _stop_and_transcribe_streaming(state)
-    else:
-        _stop_and_transcribe_batch(state)
+        return
 
-
-def _stop_and_transcribe_batch(state: AppState) -> None:
-    """Original batch transcription path."""
-    set_state(state, "transcribing")
-
-    try:
-        if not state.audio_chunks:
-            log.info("No audio")
-            return
-
-        audio = np.concatenate(state.audio_chunks)
-        state.audio_chunks = []  # free immediately — don't wait until next recording
-        duration = len(audio) / SAMPLE_RATE
-        log.info("REC STOP -- %.1fs captured", duration)
-
-        if duration < 0.3:
-            log.info("Too short, skip")
-            return
-
-        t0 = time.perf_counter()
-        segments, _ = state.model.transcribe(
-            audio, beam_size=1, language="en",
-            vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=500),
-            no_speech_threshold=0.6,
-        )
-        # Deduplicate words at VAD segment boundaries
-        seg_texts = [seg.text.strip() for seg in segments if seg.text.strip()]
-        if len(seg_texts) > 1:
-            def _norm(w: str) -> str:
-                return re.sub(r"[^a-z0-9]", "", w.lower())
-            deduped = [seg_texts[0]]
-            for seg_text in seg_texts[1:]:
-                prev_words = deduped[-1].split()
-                next_words = seg_text.split()
-                if (prev_words and next_words
-                        and _norm(prev_words[-1]) == _norm(next_words[0])):
-                    deduped.append(" ".join(next_words[1:]))
-                else:
-                    deduped.append(seg_text)
-            text = " ".join(t for t in deduped if t).strip()
-        else:
-            text = " ".join(seg_texts).strip()
-        elapsed = time.perf_counter() - t0
-        log.info("TRANSCRIBE %.3fs -> %s", elapsed, text)
-
-        if text:
-            entry = {
-                "text": text,
-                "timestamp": time.strftime("%H:%M:%S"),
-                "time_epoch": time.time(),
-            }
-            state.transcription_log.append(entry)
-            if len(state.transcription_log) > LOG_IN_MEMORY_CAP:
-                state.transcription_log[:] = state.transcription_log[-LOG_IN_MEMORY_CAP:]
-            _save_log_entry(state, entry)
-
-            if state.target_hwnd:
-                try:
-                    focus_window(state.target_hwnd)
-                    time.sleep(0.15)
-                except Exception:
-                    log.exception("Failed to restore foreground window")
-                try:
-                    type_text(text)
-                except Exception:
-                    log.exception("Failed to type text")
-                log.info("TYPED: %s", text)
-            else:
-                log.info("SKIP TYPE (no valid target window): %s", text)
-    except Exception:
-        log.exception("Transcription failed")
-    finally:
+    if not state.audio_chunks:
+        log.info("No audio")
         set_state(state, "idle")
+        return
+
+    audio = np.concatenate(state.audio_chunks)
+    target_hwnd = state.target_hwnd
+    duration = len(audio) / SAMPLE_RATE
+    log.info("REC STOP -- %.1fs captured", duration)
+
+    if duration < 0.3:
+        log.info("Too short, skip")
+        set_state(state, "idle")
+        return
+
+    set_state(state, "transcribing")
+    state.transcription_queue.put((audio, target_hwnd))
+
+
+def _transcribe_and_type(
+    state: AppState, audio: np.ndarray, target_hwnd: int | None,
+) -> None:
+    """Run Whisper inference, postprocess, log, and type text.
+
+    Called by the background transcription worker — never on the hotkey thread.
+    """
+    t0 = time.perf_counter()
+    segments, _ = state.model.transcribe(
+        audio, beam_size=1, language="en",
+        vad_filter=True,
+        vad_parameters=dict(min_silence_duration_ms=500),
+        no_speech_threshold=0.6,
+    )
+    # Deduplicate words at VAD segment boundaries
+    seg_texts = [seg.text.strip() for seg in segments if seg.text.strip()]
+    if len(seg_texts) > 1:
+        def _norm(w: str) -> str:
+            return re.sub(r"[^a-z0-9]", "", w.lower())
+        deduped = [seg_texts[0]]
+        for seg_text in seg_texts[1:]:
+            prev_words = deduped[-1].split()
+            next_words = seg_text.split()
+            if (prev_words and next_words
+                    and _norm(prev_words[-1]) == _norm(next_words[0])):
+                deduped.append(" ".join(next_words[1:]))
+            else:
+                deduped.append(seg_text)
+        text = " ".join(t for t in deduped if t).strip()
+    else:
+        text = " ".join(seg_texts).strip()
+    elapsed = time.perf_counter() - t0
+    log.info("TRANSCRIBE %.3fs -> %s", elapsed, text)
+
+    if text:
+        text = postprocess_transcription(text)
+        entry = {
+            "text": text,
+            "timestamp": time.strftime("%H:%M:%S"),
+            "time_epoch": time.time(),
+        }
+        state.transcription_log.append(entry)
+        if len(state.transcription_log) > LOG_IN_MEMORY_CAP:
+            state.transcription_log[:] = state.transcription_log[-LOG_IN_MEMORY_CAP:]
+        _save_log_entry(state, entry)
+
+        # Skip typing if user started a new recording while we transcribed
+        if target_hwnd and not state.is_recording:
+            try:
+                focus_window(target_hwnd)
+                time.sleep(0.15)
+            except Exception:
+                log.exception("Failed to restore foreground window")
+            try:
+                type_text(text)
+            except Exception:
+                log.exception("Failed to type text")
+            log.info("TYPED: %s", text)
+        elif not target_hwnd:
+            log.info("SKIP TYPE (no valid target window): %s", text)
+        else:
+            log.info("SKIP TYPE (new recording in progress): %s", text)
+
+
+def transcription_worker_loop(state: AppState) -> None:
+    """Background worker — dequeues audio jobs and runs transcription + typing."""
+    while True:
+        job = state.transcription_queue.get()
+        if job is None:
+            break  # Shutdown signal
+        audio, target_hwnd = job
+        try:
+            _transcribe_and_type(state, audio, target_hwnd)
+        except Exception:
+            log.exception("Transcription worker error")
+        finally:
+            set_state(state, "idle")
 
 
 def _stop_and_transcribe_streaming(state: AppState) -> None:

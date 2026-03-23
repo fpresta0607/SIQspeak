@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import ctypes
 import logging
 import threading
 import time
 
-from siqspeak.config import VK_LWIN
 from siqspeak.state import AppState
 
 log = logging.getLogger("siqspeak")
@@ -16,30 +14,14 @@ def quit_app(state: AppState, tray_icon) -> None:
     tray_icon.stop()
 
 
-MAX_RECORDING_SECS = 60.0  # safety cap — prevents stuck-key runaway recording
-
-
 def _wait_for_release(state: AppState) -> None:
-    """Poll until Win key is released, then stop recording and transcribe.
-
-    Includes a hard timeout to guard against stuck key state after
-    sleep/wake cycles — a common source of unbounded audio_chunks growth
-    and eventual OOM crash.
-    """
-    user32 = ctypes.windll.user32
-    deadline = time.time() + MAX_RECORDING_SECS
-    while user32.GetAsyncKeyState(VK_LWIN) & 0x8000:
-        if time.time() >= deadline:
-            log.warning(
-                "Key-release not detected after %.0fs — forcing stop "
-                "(possible stuck key state after sleep/wake).",
-                MAX_RECORDING_SECS,
-            )
-            break
+    """Poll until Win key is released, then enqueue audio for transcription."""
+    from siqspeak.win32 import hooks
+    while hooks.win_held:
         time.sleep(0.05)
     try:
-        from siqspeak.audio.recording import stop_and_transcribe
-        stop_and_transcribe(state)
+        from siqspeak.audio.recording import stop_and_enqueue
+        stop_and_enqueue(state)
     finally:
         state.hotkey_busy = False
 

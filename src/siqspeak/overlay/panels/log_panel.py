@@ -27,6 +27,21 @@ from siqspeak.state import AppState
 
 log = logging.getLogger("siqspeak")
 
+# ---------------------------------------------------------------------------
+# Font cache — load each (name, size) pair once; avoid disk I/O on every frame
+# ---------------------------------------------------------------------------
+_FONT_CACHE: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
+
+
+def _get_font(name: str, size: int) -> ImageFont.FreeTypeFont:
+    key = (name, size)
+    if key not in _FONT_CACHE:
+        try:
+            _FONT_CACHE[key] = ImageFont.truetype(name, size)
+        except OSError:
+            _FONT_CACHE[key] = ImageFont.load_default()
+    return _FONT_CACHE[key]
+
 
 def _wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
     """Word-wrap text to fit within max_width pixels."""
@@ -59,20 +74,12 @@ def _render_log_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     if not entries:
         entries = [{"text": "No transcriptions yet", "timestamp": "", "time_epoch": 0}]
 
-    try:
-        font_header = ImageFont.truetype("seguisb.ttf", 22)
-        font_sub = ImageFont.truetype("segoeui.ttf", 15)
-        font_text = ImageFont.truetype("seguisb.ttf", 18)
-        font_ts = ImageFont.truetype("segoeui.ttf", 14)
-        font_check = ImageFont.truetype("seguisb.ttf", 20)
-        font_scroll = ImageFont.truetype("segoeui.ttf", 14)
-    except OSError:
-        font_header = ImageFont.load_default()
-        font_sub = font_header
-        font_text = font_header
-        font_ts = font_header
-        font_check = font_header
-        font_scroll = font_header
+    font_header = _get_font("seguisb.ttf", 22)
+    font_sub    = _get_font("segoeui.ttf", 15)
+    font_text   = _get_font("seguisb.ttf", 18)
+    font_ts     = _get_font("segoeui.ttf", 14)
+    font_check  = _get_font("seguisb.ttf", 20)
+    font_scroll = _get_font("segoeui.ttf", 14)
 
     text_max_w = panel_w - LOG_TEXT_LEFT - LOG_COPY_BTN_W - 20
 

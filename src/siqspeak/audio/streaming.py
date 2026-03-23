@@ -14,6 +14,7 @@ from siqspeak.config import (
     save_state_config,
 )
 from siqspeak.state import AppState
+from siqspeak.text_processing import postprocess_transcription
 from siqspeak.win32.text_input import focus_window, type_text
 
 log = logging.getLogger("siqspeak")
@@ -89,6 +90,7 @@ def _transcription_worker(state: AppState) -> None:
                 text = _strip_overlap(text, state.prev_chunk_tail)
 
             if text:
+                text = postprocess_transcription(text)
                 state.prev_chunk_tail = text.split()[-OVERLAP_TAIL_WORDS:]
                 state.stream_texts.append(text)
 
