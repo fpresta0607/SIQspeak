@@ -14,7 +14,7 @@ def quit_app(state: AppState, tray_icon) -> None:
     tray_icon.stop()
 
 
-MAX_RECORDING_SECS = 60.0  # hard cap — guards against hook missing key-up event
+MAX_RECORDING_SECS = 120.0  # hard cap — guards against hook missing key-up event
 
 
 def _wait_for_release(state: AppState) -> None:
