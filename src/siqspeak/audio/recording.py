@@ -218,6 +218,7 @@ def stop_and_enqueue(state: AppState) -> None:
         return
 
     audio = np.concatenate(state.audio_chunks)
+    state.audio_chunks = []  # free raw chunks immediately — don't hold until next recording
     target_hwnd = state.target_hwnd
     duration = len(audio) / SAMPLE_RATE
     log.info("REC STOP -- %.1fs captured", duration)
