@@ -41,6 +41,8 @@ def _set_pill_mode(state: AppState, mode: str) -> None:
     else:
         x = (sw - w) // 2
         y = sh - h - 80
-    # HWND_TOPMOST (-1) + SWP_NOACTIVATE — always on top of everything
+    # HWND_TOPMOST (-1) + SWP_NOACTIVATE | SWP_FRAMECHANGED
+    # SWP_FRAMECHANGED (0x0020) is required to flush SetWindowLong style changes
+    # (e.g. WS_EX_TRANSPARENT add/remove) — without it clicks can stay locked.
     HWND_TOPMOST = ctypes.wintypes.HWND(-1)
-    user32.SetWindowPos(state.overlay_hwnd, HWND_TOPMOST, x, y, w, h, 0x0010)
+    user32.SetWindowPos(state.overlay_hwnd, HWND_TOPMOST, x, y, w, h, 0x0010 | 0x0020)
