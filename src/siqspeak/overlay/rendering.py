@@ -71,8 +71,8 @@ _idle_bg = _make_pill_bg(IDLE_W, IDLE_H, _idle_mask)
 DOT_COLOR = {"recording": CYAN, "transcribing": WHITE}
 
 
-def _build_idle_frame(hover_zone: int | None = None) -> np.ndarray:
-    """Pre-render idle toolbar: 3-icon pill (info | model | settings).
+def _build_idle_frame_uncached(hover_zone: int | None = None) -> np.ndarray:
+    """Render idle toolbar: 3-icon pill (info | model | settings).
     hover_zone: 0 (info), 1 (model), 2 (settings), or None for no hover.
     """
     buf = _idle_bg.copy()
@@ -130,6 +130,20 @@ def _build_idle_frame(hover_zone: int | None = None) -> np.ndarray:
         buf[:, :, c_dst] = pixels[:, :, c_src] * src_a + buf[:, :, c_dst] * inv
     buf[:, :, 3] = src_a + buf[:, :, 3] * inv
     return (buf * 255).clip(0, 255).astype(np.uint8)
+
+
+# Pre-compute all 4 idle frame variants at module load (instant lookup at runtime)
+_IDLE_FRAMES: dict[int | None, np.ndarray] = {
+    None: _build_idle_frame_uncached(None),
+    0: _build_idle_frame_uncached(0),
+    1: _build_idle_frame_uncached(1),
+    2: _build_idle_frame_uncached(2),
+}
+
+
+def _build_idle_frame(hover_zone: int | None = None) -> np.ndarray:
+    """Return pre-computed idle frame for the given hover zone."""
+    return _IDLE_FRAMES.get(hover_zone, _IDLE_FRAMES[None])
 
 
 def _draw_centered_text(

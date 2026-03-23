@@ -191,6 +191,11 @@ def message_loop(state: AppState) -> None:
                     _set_pill_mode(state, "idle")
                     frame = _build_idle_frame(state.hover_zone)
                     _update_layered_window(state.overlay_hwnd, frame, IDLE_W, IDLE_H)
+                    # Auto-refresh log panel if it was open and new transcription added
+                    if state.log_panel_dirty:
+                        state.log_panel_dirty = False
+                        if state.active_panel == "info":
+                            _show_log_panel(state)
                 else:
                     _hide_all_panels(state)
                     _hide_welcome(state)

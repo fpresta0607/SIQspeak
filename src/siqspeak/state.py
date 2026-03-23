@@ -66,6 +66,7 @@ class AppState:
     log_scroll_offset: int = 0
     wheel_delta: int = 0
     log_append_count: int = 0
+    log_panel_dirty: bool = False  # set by worker when new transcription added
 
     # Welcome
     welcome_hwnd: int | None = None

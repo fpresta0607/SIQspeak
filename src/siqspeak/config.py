@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import ctypes
+import functools
 import io
 import json
 import logging
@@ -103,8 +104,9 @@ _ICON_HEXAGON_B64 = "iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAABWUlEQVR42u3
 _ICON_GEAR_B64 = "iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAADAUlEQVR4nO2d246DMAxEcbX//8teUWmliqWQpLZn0sx5LrHx2CHkQrdNCCGEEEKIdXF3/0Zbd/wgjTswEK+2zcxQfhhb0C05GGj7Rx6VxgSBAHcZ5ondElv276gCwEAEQFSBE2b/jioADEyAyipw0uzfUQWAgSk/kp3eWBU91yCz/2l/A+PgaQG0APAuyJDTAODgUwiwOnABnGRCDgW0BL0zAK1dRla7GUAMj4xmZrI39XR0ZiCQtt/aqzTGMiZ3Ej+etqoMXd20gfpgBp8eq9xor+2qEVKTAJ84wxr8bBFar330NNjrEHvwM0TojdOtAMfGRoRgDn6UT2dxaRp1tTQ84vy76xiDP+p3xLA25CF8VH/W4F/5eLy/qId02apU1VutFb89t3DlE3RnXEZA/n43Q7XtpExu/TPyQTD8y20/WhtCZJQHdAOIKeeeeKVnx6hwHhy4bD9G2zfGh6IPtsnkSyth3cqZo9E3bAELMlE+RXXJ8CXJV67eH3pu+Or3DMuQtAKc8UmmzTAUpRHAFz2iFDYVkZF9RtxGlIgUFeCAjGSpAgoBsvtv5mcBrQCrIAHASAAwEgCMBABDK4AXnhHbVhfAEJtiSYamIQJkvSk6cRtfNxtqlRtiSbKfSgDk9kAkVALYxRx+TzCvfs+U/Ttakpx1SVKL8oBF+dE+Fb0zwort99hrPh+A2l+zEbTRS0+8ptkb6sVHT7U39E1AmQ7YRRByPqA1SLMEx2/8H4lJ+lTEq6FZ9uSc0ZI8kXtlhyugxYHZKsEB93pbAccGItRnrAQP2Ip+Fqu765q7oJHAM5zDrd5L2r2NciuA+biqg30rmYxjrQQnSAx9rAO9NrEVE3G2dkbbb+1tALJnUtH2eqB9AGadkPmk3QzgL0Su74ZiMdLvBS25JrwicAGc9D2gCvpvRVjyx7vRUI+CbLIvrEzZBa0OTIDKrDTgPzfdoQoAAxEA0ScbaRWoAsCUC4AckRhhFagCwFC9Bxjo6+kMc0JwfNGvpQghhBBCCLHV8wsqGXiPLBVKzgAAAABJRU5ErkJggg=="
 
 
+@functools.lru_cache(maxsize=32)
 def _load_icon(b64: str, size: tuple[int, int], color: tuple[int, int, int]) -> Image.Image:
-    """Decode a base64 PNG, resize it, and tint to the given RGB color."""
+    """Decode a base64 PNG, resize it, and tint to the given RGB color (cached)."""
     data = base64.b64decode(b64)
     img = Image.open(io.BytesIO(data)).convert("RGBA").resize(size, Image.LANCZOS)
     # Tint: use source alpha, replace RGB with target color
@@ -115,7 +117,7 @@ def _load_icon(b64: str, size: tuple[int, int], color: tuple[int, int, int]) -> 
         a.point(lambda p: int(p / 255 * color[2])),
         a,
     ))
-    return img
+    return img.copy()
 
 
 # ---------------------------------------------------------------------------

@@ -277,6 +277,7 @@ def _transcribe_and_type(
         if len(state.transcription_log) > LOG_IN_MEMORY_CAP:
             state.transcription_log[:] = state.transcription_log[-LOG_IN_MEMORY_CAP:]
         _save_log_entry(state, entry)
+        state.log_panel_dirty = True
 
         # Skip typing if user started a new recording while we transcribed
         if target_hwnd and not state.is_recording:
