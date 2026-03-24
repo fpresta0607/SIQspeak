@@ -112,6 +112,7 @@ def message_loop(state: AppState) -> None:
     WM_POWERBROADCAST = 0x0218
     PBT_APMRESUMEAUTOMATIC = 0x12  # system auto-resumed (e.g. scheduled wake)
     PBT_APMRESUMESUSPEND = 0x7     # user-initiated resume from suspend
+    PBT_APMSUSPEND = 0x0004        # system is about to sleep/hibernate
 
     install_keyboard_hook(state)
     if not state.keyboard_hook:
@@ -176,7 +177,11 @@ def message_loop(state: AppState) -> None:
             on_hotkey_down(state)
 
         elif msg.message == WM_POWERBROADCAST:
-            if msg.wParam in (PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND):
+            if msg.wParam == PBT_APMSUSPEND:
+                # System going to sleep/hibernate — kill the process cleanly
+                log.info("System suspending — shutting down SIQspeak")
+                quit_app(state, state.icon)
+            elif msg.wParam in (PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND):
                 _recover_after_sleep(state)
 
         elif msg.message == WM_TIMER:
