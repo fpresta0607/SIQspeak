@@ -35,6 +35,13 @@ def _set_pill_mode(state: AppState, mode: str) -> None:
         style = user32.GetWindowLongW(state.overlay_hwnd, -20)
         user32.SetWindowLongW(state.overlay_hwnd, -20, style | 0x00000020)
 
+    # Flush style change — SetWindowLongW alone doesn't recompute the frame
+    HWND_TOPMOST = ctypes.wintypes.HWND(-1)
+    user32.SetWindowPos(
+        state.overlay_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+        0x0002 | 0x0001 | 0x0010 | 0x0020,  # SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_FRAMECHANGED
+    )
+
 
 def _ensure_clickable(state: AppState) -> None:
     """Watchdog: if pill is in idle mode but WS_EX_TRANSPARENT is still set, clear it.
