@@ -51,17 +51,6 @@ def _ensure_clickable(state: AppState) -> None:
         # Stuck — clear it and force a style flush via SWP_FRAMECHANGED
         user32.SetWindowLongW(state.overlay_hwnd, -20, style & ~WS_EX_TRANSPARENT)
         HWND_TOPMOST = ctypes.wintypes.HWND(-1)
+        # SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_FRAMECHANGED
         user32.SetWindowPos(state.overlay_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                            0x0002 | 0x0001 | 0x0010 | 0x0020)  # NOMOVE|NOSIZE|NOACTIVATE|FRAMECHANGED
-
-    if state.pill_user_x is not None:
-        x = state.pill_user_x
-        y = state.pill_user_y
-    else:
-        x = (sw - w) // 2
-        y = sh - h - 80
-    # HWND_TOPMOST (-1) + SWP_NOACTIVATE | SWP_FRAMECHANGED
-    # SWP_FRAMECHANGED (0x0020) is required to flush SetWindowLong style changes
-    # (e.g. WS_EX_TRANSPARENT add/remove) — without it clicks can stay locked.
-    HWND_TOPMOST = ctypes.wintypes.HWND(-1)
-    user32.SetWindowPos(state.overlay_hwnd, HWND_TOPMOST, x, y, w, h, 0x0010 | 0x0020)
+                            0x0002 | 0x0001 | 0x0010 | 0x0020)
