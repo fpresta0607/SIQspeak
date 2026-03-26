@@ -46,7 +46,7 @@ from siqspeak.overlay.panels import _hide_all_panels, _update_panel_content
 from siqspeak.overlay.panels.log_panel import _render_log_panel, _show_log_panel
 from siqspeak.overlay.panels.model_panel import _render_model_panel
 from siqspeak.overlay.panels.welcome import _hide_welcome, _show_welcome
-from siqspeak.overlay.pill import _set_pill_mode
+from siqspeak.overlay.pill import _set_pill_mode, _ensure_clickable
 from siqspeak.overlay.rendering import _build_idle_frame, _render_frame
 from siqspeak.state import AppState
 from siqspeak.tray import make_icon
@@ -348,6 +348,8 @@ def message_loop(state: AppState) -> None:
                             hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                         )
+                # Watchdog: clear stuck WS_EX_TRANSPARENT if idle pill is frozen
+                _ensure_clickable(state)
 
 
 
