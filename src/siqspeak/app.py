@@ -198,12 +198,12 @@ def message_loop(state: AppState) -> None:
             # --- Message-driven state transition (thread-safe) ---
             new_state = STATE_NAME.get(msg.wParam, "idle")
 
-            # Stale-idle guard: reject idle from a previous cycle if recording is active
-            if new_state == "idle" and (state.is_recording or state.hotkey_busy):
-                log.debug(
-                    "STATE GUARD: rejected idle (is_recording=%s, hotkey_busy=%s)",
-                    state.is_recording, state.hotkey_busy,
-                )
+            # Stale-idle guard: reject idle from a previous cycle if a NEW recording
+            # is already active.  Only check is_recording (not hotkey_busy) — hotkey_busy
+            # is cleared in _wait_for_release's finally block which can run AFTER the
+            # worker has already posted its idle, causing false rejections.
+            if new_state == "idle" and state.is_recording:
+                log.debug("STATE GUARD: rejected stale idle (is_recording=True)")
             elif new_state != current_state:
                 log.info("STATE %s -> %s", current_state, new_state)
                 current_state = new_state
