@@ -25,6 +25,8 @@ from siqspeak.config import (
     MODEL_PANEL_HEADER_H,
     MODEL_PANEL_ROW_H,
     SCRIPT_DIR,
+    STATE_NAME,
+    WM_APP_STATE,
     WM_TIMER,
     _load_config,
     device_settings,
@@ -46,7 +48,7 @@ from siqspeak.overlay.panels import _hide_all_panels, _update_panel_content
 from siqspeak.overlay.panels.log_panel import _render_log_panel, _show_log_panel
 from siqspeak.overlay.panels.model_panel import _render_model_panel
 from siqspeak.overlay.panels.welcome import _hide_welcome, _show_welcome
-from siqspeak.overlay.pill import _set_pill_mode, _ensure_clickable
+from siqspeak.overlay.pill import _set_pill_mode
 from siqspeak.overlay.rendering import _build_idle_frame, _render_frame
 from siqspeak.state import AppState
 from siqspeak.tray import make_icon
@@ -58,7 +60,8 @@ from siqspeak.win32.hooks import (
     uninstall_mouse_hook,
 )
 from siqspeak.win32.window import (
-    _create_overlay_window,
+    _create_active_overlay,
+    _create_idle_overlay,
     _create_panel_window,
     _update_layered_window,
 )
@@ -108,11 +111,15 @@ def _recover_after_sleep(state: AppState) -> None:
 def message_loop(state: AppState) -> None:
     """Unified Win32 message loop: hotkey + overlay animation + panel interaction."""
     user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
     WM_APP_HOTKEY = 0x8001  # custom message posted by keyboard hook
     WM_POWERBROADCAST = 0x0218
     PBT_APMRESUMEAUTOMATIC = 0x12  # system auto-resumed (e.g. scheduled wake)
     PBT_APMRESUMESUSPEND = 0x7     # user-initiated resume from suspend
     PBT_APMSUSPEND = 0x0004        # system is about to sleep/hibernate
+
+    # Store thread ID so background threads can PostThreadMessageW to us
+    state._main_thread_id = kernel32.GetCurrentThreadId()
 
     install_keyboard_hook(state)
     if not state.keyboard_hook:
@@ -120,10 +127,17 @@ def message_loop(state: AppState) -> None:
         return
     log.info("Hotkey: hold Ctrl+Win to record, release to transcribe")
 
-    state.overlay_hwnd = _create_overlay_window(state)
-    if not state.overlay_hwnd:
-        log.error("Failed to create overlay window")
+    # Create two overlay windows with immutable styles (no runtime style toggling)
+    state.idle_overlay_hwnd = _create_idle_overlay(state)
+    state.active_overlay_hwnd = _create_active_overlay(state)
+    if not state.idle_overlay_hwnd or not state.active_overlay_hwnd:
+        log.error("Failed to create overlay windows")
         return
+    state.overlay_hwnd = state.idle_overlay_hwnd  # idle is the initial visible window
+    log.info(
+        "Overlay windows created: idle=%d, active=%d",
+        state.idle_overlay_hwnd, state.active_overlay_hwnd,
+    )
 
     state.log_panel_hwnd = _create_panel_window()
     state.model_panel_hwnd = _create_panel_window()
@@ -134,9 +148,9 @@ def message_loop(state: AppState) -> None:
     if not state.mouse_hook:
         log.warning("Failed to install mouse hook — log panel scroll disabled")
 
-    # Show pill immediately in idle mode
-    _update_layered_window(state.overlay_hwnd, _build_idle_frame(), IDLE_W, IDLE_H)
-    user32.ShowWindow(state.overlay_hwnd, 8)  # SW_SHOWNA
+    # Show idle pill immediately
+    _update_layered_window(state.idle_overlay_hwnd, _build_idle_frame(), IDLE_W, IDLE_H)
+    user32.ShowWindow(state.idle_overlay_hwnd, 8)  # SW_SHOWNA
 
     _show_welcome(state)
 
@@ -168,13 +182,46 @@ def message_loop(state: AppState) -> None:
                 state.model_panel_hwnd = None
                 state.settings_panel_hwnd = None
                 state.welcome_hwnd = None
-                user32.DestroyWindow(state.overlay_hwnd)
+                for hwnd in (state.idle_overlay_hwnd, state.active_overlay_hwnd):
+                    if hwnd:
+                        user32.DestroyWindow(hwnd)
+                state.idle_overlay_hwnd = None
+                state.active_overlay_hwnd = None
                 state.overlay_hwnd = None
                 user32.PostQuitMessage(0)
             break
 
         if msg.message == WM_APP_HOTKEY:
             on_hotkey_down(state)
+
+        elif msg.message == WM_APP_STATE:
+            # --- Message-driven state transition (thread-safe) ---
+            new_state = STATE_NAME.get(msg.wParam, "idle")
+
+            # Stale-idle guard: reject idle from a previous cycle if recording is active
+            if new_state == "idle" and (state.is_recording or state.hotkey_busy):
+                log.debug(
+                    "STATE GUARD: rejected idle (is_recording=%s, hotkey_busy=%s)",
+                    state.is_recording, state.hotkey_busy,
+                )
+            elif new_state != current_state:
+                log.info("STATE %s -> %s", current_state, new_state)
+                current_state = new_state
+                phase = 0.0
+
+                if current_state == "idle":
+                    _set_pill_mode(state, "idle")
+                    frame = _build_idle_frame(state.hover_zone)
+                    _update_layered_window(state.overlay_hwnd, frame, IDLE_W, IDLE_H)
+                    # Auto-refresh log panel if new transcription was added
+                    if state.log_panel_dirty:
+                        state.log_panel_dirty = False
+                        if state.active_panel == "info":
+                            _show_log_panel(state)
+                else:
+                    _hide_all_panels(state)
+                    _hide_welcome(state)
+                    _set_pill_mode(state, "active")
 
         elif msg.message == WM_POWERBROADCAST:
             if msg.wParam == PBT_APMSUSPEND:
@@ -185,27 +232,6 @@ def message_loop(state: AppState) -> None:
                 _recover_after_sleep(state)
 
         elif msg.message == WM_TIMER:
-            target = state.overlay_target_state
-
-            # State transition
-            if target != current_state:
-                current_state = target
-                phase = 0.0
-
-                if current_state == "idle":
-                    _set_pill_mode(state, "idle")
-                    frame = _build_idle_frame(state.hover_zone)
-                    _update_layered_window(state.overlay_hwnd, frame, IDLE_W, IDLE_H)
-                    # Auto-refresh log panel if it was open and new transcription added
-                    if state.log_panel_dirty:
-                        state.log_panel_dirty = False
-                        if state.active_panel == "info":
-                            _show_log_panel(state)
-                else:
-                    _hide_all_panels(state)
-                    _hide_welcome(state)
-                    _set_pill_mode(state, "active")
-
             # Animate active states
             if current_state != "idle":
                 phase += 0.1
@@ -348,8 +374,6 @@ def message_loop(state: AppState) -> None:
                             hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                         )
-                # Watchdog: clear stuck WS_EX_TRANSPARENT if idle pill is frozen
-                _ensure_clickable(state)
 
 
 

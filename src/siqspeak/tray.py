@@ -1,9 +1,11 @@
+import ctypes
 import logging
 import os
+import threading
 
 from PIL import Image, ImageFilter
 
-from siqspeak.config import SCRIPT_DIR
+from siqspeak.config import SCRIPT_DIR, STATE_CODE, WM_APP_STATE
 from siqspeak.state import AppState
 
 log = logging.getLogger("siqspeak")
@@ -45,4 +47,15 @@ def make_icon(_color: str = "") -> Image.Image:
 
 
 def set_state(state: AppState, new_state: str) -> None:
-    state.overlay_target_state = new_state
+    """Post a state transition to the main message loop (thread-safe).
+
+    Uses PostThreadMessageW so background threads safely deliver state
+    changes to the main thread's message queue in order.
+    """
+    tid = state._main_thread_id
+    if not tid:
+        log.warning("set_state(%s) called before message loop started", new_state)
+        return
+    code = STATE_CODE[new_state]
+    ctypes.windll.user32.PostThreadMessageW(tid, WM_APP_STATE, code, 0)
+    log.debug("set_state(%s) posted from thread=%s", new_state, threading.current_thread().name)

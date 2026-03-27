@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes
+import logging
 
 from siqspeak.config import ACTIVE_H, ACTIVE_W, IDLE_H, IDLE_W
 from siqspeak.state import AppState
+
+log = logging.getLogger("siqspeak")
+
+# ShowWindow constants
+_SW_HIDE = 0
+_SW_SHOWNA = 8  # show without activating
 
 
 def _pill_screen_rect(state: AppState) -> tuple[int, int, int, int]:
@@ -16,48 +23,54 @@ def _pill_screen_rect(state: AppState) -> tuple[int, int, int, int]:
 
 
 def _set_pill_mode(state: AppState, mode: str) -> None:
-    """Switch pill between idle (toolbar) and active (dots) mode."""
-    if state.pill_current_mode == mode or not state.overlay_hwnd:
+    """Switch pill between idle (clickable) and active (click-through) by swapping windows.
+
+    Two pre-created overlay windows have immutable extended styles:
+    - idle_overlay_hwnd:   NO WS_EX_TRANSPARENT (always clickable)
+    - active_overlay_hwnd: WITH WS_EX_TRANSPARENT (always click-through)
+
+    Mode switch = position incoming window at outgoing window's location,
+    show incoming, hide outgoing, update state.overlay_hwnd alias.
+    """
+    if state.pill_current_mode == mode:
         return
-    state.pill_current_mode = mode
+    if not state.idle_overlay_hwnd or not state.active_overlay_hwnd:
+        return
+
     user32 = ctypes.windll.user32
-    sw = user32.GetSystemMetrics(0)
-    sh = user32.GetSystemMetrics(1)
+    old_mode = state.pill_current_mode
+    state.pill_current_mode = mode
 
     if mode == "idle":
-        w, h = IDLE_W, IDLE_H
-        # Remove WS_EX_TRANSPARENT (hoverable)
-        style = user32.GetWindowLongW(state.overlay_hwnd, -20)  # GWL_EXSTYLE
-        user32.SetWindowLongW(state.overlay_hwnd, -20, style & ~0x00000020)
+        outgoing = state.active_overlay_hwnd
+        incoming = state.idle_overlay_hwnd
+        in_w, in_h = IDLE_W, IDLE_H
     else:
-        w, h = ACTIVE_W, ACTIVE_H
-        # Add WS_EX_TRANSPARENT (click-through during recording/transcribing)
-        style = user32.GetWindowLongW(state.overlay_hwnd, -20)
-        user32.SetWindowLongW(state.overlay_hwnd, -20, style | 0x00000020)
+        outgoing = state.idle_overlay_hwnd
+        incoming = state.active_overlay_hwnd
+        in_w, in_h = ACTIVE_W, ACTIVE_H
 
-    # Flush style change — SetWindowLongW alone doesn't recompute the frame
+    # Read position from the outgoing (visible) window
+    rect = ctypes.wintypes.RECT()
+    user32.GetWindowRect(outgoing, ctypes.byref(rect))
+    out_cx = (rect.left + rect.right) // 2
+    out_cy = (rect.top + rect.bottom) // 2
+
+    # Center the incoming window on the same midpoint
+    in_x = out_cx - in_w // 2
+    in_y = out_cy - in_h // 2
+
     HWND_TOPMOST = ctypes.wintypes.HWND(-1)
+    SWP_NOACTIVATE = 0x0010
+
+    # Position incoming window (still hidden)
     user32.SetWindowPos(
-        state.overlay_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-        0x0002 | 0x0001 | 0x0010 | 0x0020,  # SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_FRAMECHANGED
+        incoming, HWND_TOPMOST, in_x, in_y, in_w, in_h, SWP_NOACTIVATE,
     )
 
+    # Show incoming THEN hide outgoing to avoid flicker gap
+    user32.ShowWindow(incoming, _SW_SHOWNA)
+    user32.ShowWindow(outgoing, _SW_HIDE)
 
-def _ensure_clickable(state: AppState) -> None:
-    """Watchdog: if pill is in idle mode but WS_EX_TRANSPARENT is still set, clear it.
-
-    Called on the topmost tick. Fixes the 'pill freezes / clicks pass through'
-    bug where a racing state transition leaves the transparent flag stuck on.
-    """
-    if not state.overlay_hwnd or state.pill_current_mode != "idle":
-        return
-    user32 = ctypes.windll.user32
-    style = user32.GetWindowLongW(state.overlay_hwnd, -20)  # GWL_EXSTYLE
-    WS_EX_TRANSPARENT = 0x00000020
-    if style & WS_EX_TRANSPARENT:
-        # Stuck — clear it and force a style flush via SWP_FRAMECHANGED
-        user32.SetWindowLongW(state.overlay_hwnd, -20, style & ~WS_EX_TRANSPARENT)
-        HWND_TOPMOST = ctypes.wintypes.HWND(-1)
-        # SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_FRAMECHANGED
-        user32.SetWindowPos(state.overlay_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                            0x0002 | 0x0001 | 0x0010 | 0x0020)
+    state.overlay_hwnd = incoming
+    log.info("PILL MODE %s -> %s (hwnd=%d)", old_mode, mode, incoming)

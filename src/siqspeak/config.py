@@ -182,6 +182,11 @@ _DRAG_THRESHOLD = 5
 
 # Win32 message constants
 WM_TIMER = 0x0113
+WM_APP_STATE = 0x8002  # custom message for overlay state transitions
+
+# State codes for WM_APP_STATE wParam (PostThreadMessageW)
+STATE_CODE: dict[str, int] = {"idle": 0, "recording": 1, "transcribing": 2}
+STATE_NAME: dict[int, str] = {0: "idle", 1: "recording", 2: "transcribing"}
 
 
 # ---------------------------------------------------------------------------
