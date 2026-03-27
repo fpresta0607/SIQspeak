@@ -58,7 +58,7 @@ def _create_idle_overlay(state: AppState) -> int:
         | 0x08000000  # WS_EX_NOACTIVATE
         | 0x00000080  # WS_EX_TOOLWINDOW
     )
-    if state.pill_user_x is not None:
+    if state.pill_user_x is not None and state.pill_user_y is not None:
         x = state.pill_user_x
         y = state.pill_user_y
     else:
@@ -83,7 +83,7 @@ def _create_active_overlay(state: AppState) -> int:
         | 0x00000080  # WS_EX_TOOLWINDOW
         | 0x00000020  # WS_EX_TRANSPARENT — click-through, immutable
     )
-    if state.pill_user_x is not None:
+    if state.pill_user_x is not None and state.pill_user_y is not None:
         x = state.pill_user_x
         y = state.pill_user_y
     else:
