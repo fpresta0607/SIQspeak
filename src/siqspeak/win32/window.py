@@ -5,7 +5,7 @@ import ctypes.wintypes
 
 import numpy as np
 
-from siqspeak.config import IDLE_H, IDLE_W
+from siqspeak.config import ACTIVE_H, ACTIVE_W, IDLE_H, IDLE_W
 from siqspeak.state import AppState
 from siqspeak.win32.structs import BITMAPINFOHEADER, BLENDFUNCTION, SIZEL
 
@@ -49,8 +49,8 @@ def _update_layered_window(hwnd: int, buf: np.ndarray, w: int, h: int) -> None:
     user32.ReleaseDC(0, hdc_screen)
 
 
-def _create_overlay_window(state: AppState) -> int:
-    """Create a layered, topmost popup window for the pill (starts idle size, NOT click-through)."""
+def _create_idle_overlay(state: AppState) -> int:
+    """Create the idle pill window — clickable, NO WS_EX_TRANSPARENT."""
     user32 = ctypes.windll.user32
     WS_EX = (
         0x00080000  # WS_EX_LAYERED
@@ -58,7 +58,6 @@ def _create_overlay_window(state: AppState) -> int:
         | 0x08000000  # WS_EX_NOACTIVATE
         | 0x00000080  # WS_EX_TOOLWINDOW
     )
-    # Note: no WS_EX_TRANSPARENT -- idle pill is hoverable
     if state.pill_user_x is not None:
         x = state.pill_user_x
         y = state.pill_user_y
@@ -70,6 +69,31 @@ def _create_overlay_window(state: AppState) -> int:
     return user32.CreateWindowExW(
         WS_EX, "STATIC", "", 0x80000000,  # WS_POPUP
         x, y, IDLE_W, IDLE_H,
+        None, None, None, None,
+    )
+
+
+def _create_active_overlay(state: AppState) -> int:
+    """Create the active pill window — click-through, WITH WS_EX_TRANSPARENT baked in."""
+    user32 = ctypes.windll.user32
+    WS_EX = (
+        0x00080000  # WS_EX_LAYERED
+        | 0x00000008  # WS_EX_TOPMOST
+        | 0x08000000  # WS_EX_NOACTIVATE
+        | 0x00000080  # WS_EX_TOOLWINDOW
+        | 0x00000020  # WS_EX_TRANSPARENT — click-through, immutable
+    )
+    if state.pill_user_x is not None:
+        x = state.pill_user_x
+        y = state.pill_user_y
+    else:
+        sw = user32.GetSystemMetrics(0)
+        sh = user32.GetSystemMetrics(1)
+        x = (sw - ACTIVE_W) // 2
+        y = sh - ACTIVE_H - 80
+    return user32.CreateWindowExW(
+        WS_EX, "STATIC", "", 0x80000000,  # WS_POPUP
+        x, y, ACTIVE_W, ACTIVE_H,
         None, None, None, None,
     )
 

@@ -95,8 +95,9 @@ def start_recording(state: AppState) -> None:
     state.target_hwnd = ctypes.windll.user32.GetForegroundWindow()
     # Don't type back into our own overlay or panel windows
     own_hwnds = {
-        state.overlay_hwnd, state.log_panel_hwnd,
-        state.model_panel_hwnd, state.settings_panel_hwnd, state.welcome_hwnd,
+        state.idle_overlay_hwnd, state.active_overlay_hwnd,
+        state.log_panel_hwnd, state.model_panel_hwnd,
+        state.settings_panel_hwnd, state.welcome_hwnd,
     }
     if state.target_hwnd in own_hwnds:
         state.target_hwnd = None

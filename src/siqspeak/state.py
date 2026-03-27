@@ -37,10 +37,14 @@ class AppState:
     mic_expanded: bool = False
 
     # Overlay
-    overlay_hwnd: int | None = None
-    overlay_target_state: str = "idle"
+    overlay_hwnd: int | None = None  # alias: always the currently visible overlay
+    idle_overlay_hwnd: int | None = None
+    active_overlay_hwnd: int | None = None
     pill_current_mode: str = "idle"
     hover_zone: int | None = None
+
+    # Message loop thread ID (for PostThreadMessageW from background threads)
+    _main_thread_id: int = 0
 
     # Drag
     drag_active: bool = False
@@ -76,7 +80,6 @@ class AppState:
     # Hotkey / control
     should_quit: bool = False
     hotkey_busy: bool = False
-    recording_start_time: float = 0.0  # epoch — used for timer-loop safety valve
 
     # Debounce
     idle_click_debounce: bool = False
