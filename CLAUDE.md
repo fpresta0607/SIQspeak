@@ -54,7 +54,7 @@ src/siqspeak/
     manager.py             # _start_model_load(), _start_model_download_and_load(), cache check
   overlay/
     rendering.py           # pill masks, idle/active frame rendering, BGRA conversion
-    pill.py                # _pill_screen_rect(), _set_pill_mode()
+    pill.py                # _pill_screen_rect(), _set_pill_mode() — swaps two overlay windows
     panels/
       __init__.py          # _hide_all_panels(), _toggle_panel(), _show_panel_window(), _update_panel_content()
       log_panel.py         # transcription log panel
@@ -68,7 +68,7 @@ src/siqspeak/
     structs.py             # ctypes Structures (SIZEL, BLENDFUNCTION, INPUT, etc.)
     dpi.py                 # enable_dpi_awareness()
     text_input.py          # type_text(), focus_window()
-    window.py              # create_overlay_window(), create_panel_window(), update_layered_window()
+    window.py              # _create_idle_overlay(), _create_active_overlay(), _create_panel_window(), _update_layered_window()
     hooks.py               # mouse hook install/uninstall/callback
 ```
 
@@ -76,7 +76,7 @@ Root `dictate.py` is a 3-line shim for backward compatibility with existing shor
 
 ## Architecture
 
-**State management:** All mutable state lives in a single `AppState` dataclass (`state.py`). Every stateful function receives `state: AppState` as its first parameter. Thread-safe via atomic attribute writes under CPython GIL; `queue.Queue` for streaming dispatch.
+**State management:** All mutable state lives in a single `AppState` dataclass (`state.py`). Every stateful function receives `state: AppState` as its first parameter. Thread-safe via atomic attribute writes under CPython GIL; `queue.Queue` for streaming dispatch. Overlay state transitions use `PostThreadMessageW` to deliver changes from background threads to the main message loop in order (`WM_APP_STATE` custom message).
 
 **Flow:** `main()` (in `app.py`) loads model → starts pystray in background thread → runs unified Win32 message loop on main thread (handles hotkey, overlay animation, and hover/click events).
 
@@ -85,11 +85,12 @@ Root `dictate.py` is a 3-line shim for backward compatibility with existing shor
 2. Release Win → `_wait_for_release()` polling thread detects key-up (5s safety timeout) → `stop_and_enqueue()` stops mic, snapshots audio + target window, enqueues for async processing, hotkey released immediately
 3. Background `transcription_worker_loop` dequeues audio → runs Whisper inference → postprocesses → restores foreground window → types text via `SendInput` Unicode events → pill returns to idle
 
-**Overlay (two modes):**
-- Idle: 160x44 toolbar with 3 clickable icon zones (info, model, settings). NOT click-through.
-- Active: 180x44 pill with 6 audio-reactive dots, click-through (`WS_EX_TRANSPARENT`)
+**Overlay (two-window architecture):**
+Two pre-created overlay windows with immutable extended styles — no runtime `SetWindowLongW` toggling:
+- `idle_overlay_hwnd`: 160x44 toolbar with 3 clickable icon zones (info, model, settings). NO `WS_EX_TRANSPARENT`.
+- `active_overlay_hwnd`: 180x44 pill with 6 audio-reactive dots. `WS_EX_TRANSPARENT` baked in at creation.
 
-Rendered via `UpdateLayeredWindow` with pre-multiplied alpha BGRA buffers from numpy. Animates at ~30fps via `SetTimer`.
+Mode switch = show/hide swap with position sync. `state.overlay_hwnd` always points to the currently visible window. Rendered via `UpdateLayeredWindow` with pre-multiplied alpha BGRA buffers from numpy. Animates at ~30fps via `SetTimer`.
 
 **Panels (click-activated, one at a time):**
 All panels share consistent styling: 14px corner radius, opaque background, header + separator, 20px padding. Screen-adaptive dimensions via `GetSystemMetrics`.
