@@ -8,6 +8,7 @@ from siqspeak.win32.structs import (
     KEYEVENTF_KEYUP,
     KEYEVENTF_UNICODE,
     VK_CONTROL,
+    VK_SHIFT,
 )
 
 log = logging.getLogger("siqspeak")
@@ -18,14 +19,16 @@ def type_text(text: str, release_modifiers: bool = True) -> None:
     user32 = ctypes.windll.user32
 
     if release_modifiers:
-        # Release Ctrl before injecting text. Win key is already suppressed
-        # by the keyboard hook — sending an orphaned VK_LWIN key-up can
-        # trigger Start Menu on some Windows versions.
-        release = (INPUT * 1)()
+        # Release Ctrl and Shift before injecting text so they don't
+        # interfere with the typed characters.
+        release = (INPUT * 2)()
         release[0].type = INPUT_KEYBOARD
         release[0].ki.wVk = VK_CONTROL
         release[0].ki.dwFlags = KEYEVENTF_KEYUP
-        user32.SendInput(1, ctypes.pointer(release[0]), ctypes.sizeof(INPUT))
+        release[1].type = INPUT_KEYBOARD
+        release[1].ki.wVk = VK_SHIFT
+        release[1].ki.dwFlags = KEYEVENTF_KEYUP
+        user32.SendInput(2, ctypes.pointer(release[0]), ctypes.sizeof(INPUT))
         time.sleep(0.05)
 
     # Send each character as a Unicode key down + key up pair

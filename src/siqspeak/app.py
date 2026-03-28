@@ -85,10 +85,10 @@ def _recover_after_sleep(state: AppState) -> None:
             state.mic_stream = None
         state.audio_chunks = []
 
-    # Release stuck hotkey flags (win_held can stay True if hook died mid-press)
+    # Release stuck hotkey flags (space_held can stay True if hook died mid-press)
     from siqspeak.win32 import hooks as _hooks
-    _hooks.win_held = False
-    _hooks._win_suppressed = False
+    _hooks.space_held = False
+    _hooks._space_suppressed = False
     state.hotkey_busy = False
     from siqspeak.tray import set_state as _set_state
     _set_state(state, "idle")
@@ -123,9 +123,9 @@ def message_loop(state: AppState) -> None:
 
     install_keyboard_hook(state)
     if not state.keyboard_hook:
-        log.error("Failed to install keyboard hook for Ctrl+Win hotkey")
+        log.error("Failed to install keyboard hook for Ctrl+Shift+Space hotkey")
         return
-    log.info("Hotkey: hold Ctrl+Win to record, release to transcribe")
+    log.info("Hotkey: hold Ctrl+Shift+Space to record, release to transcribe")
 
     # Create two overlay windows with immutable styles (no runtime style toggling)
     state.idle_overlay_hwnd = _create_idle_overlay(state)

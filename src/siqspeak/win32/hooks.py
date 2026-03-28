@@ -3,7 +3,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes
 
-from siqspeak.config import VK_CONTROL, VK_LWIN, VK_RWIN
+from siqspeak.config import VK_CONTROL, VK_SHIFT, VK_SPACE
 from siqspeak.state import AppState
 
 # ---------------------------------------------------------------------------
@@ -73,18 +73,16 @@ def uninstall_mouse_hook(state: AppState) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Low-level keyboard hook for Ctrl+Win hotkey
+# Low-level keyboard hook for Ctrl+Shift+Space hotkey
 # ---------------------------------------------------------------------------
-# RegisterHotKey cannot reliably use VK_LWIN as the trigger key on Windows 11
-# because the shell intercepts Win key presses. A WH_KEYBOARD_LL hook runs
-# before the shell, so we can detect Ctrl+Win and suppress the Start Menu.
+# A WH_KEYBOARD_LL hook lets us detect the three-key combo and suppress the
+# Space key so it doesn't type a literal space into the active window.
 # ---------------------------------------------------------------------------
 
 WH_KEYBOARD_LL = 13
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
-WM_SYSKEYDOWN = 0x0104
-WM_SYSKEYUP = 0x0105
+LLKHF_INJECTED = 0x10
 
 
 class _KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -97,46 +95,49 @@ class _KBDLLHOOKSTRUCT(ctypes.Structure):
     ]
 
 
-# Track whether Win was consumed by our hotkey so we suppress the key-up too.
-# win_held is True while Win is physically held during a Ctrl+Win press —
-# _wait_for_release polls this instead of GetAsyncKeyState (which can't see
-# suppressed keys).
-_win_suppressed: bool = False
-win_held: bool = False
+# Track whether Space was consumed by our hotkey so we suppress the key-up too.
+# space_held is True while Space is physically held during a Ctrl+Shift+Space
+# press — _wait_for_release polls this instead of GetAsyncKeyState (which can't
+# see suppressed keys).
+_space_suppressed: bool = False
+space_held: bool = False
 
 
 def reset_keyboard_hook_state() -> None:
     """Reset hook tracking flags — call when reinstalling the keyboard hook."""
-    global _win_suppressed, win_held
-    _win_suppressed = False
-    win_held = False
+    global _space_suppressed, space_held
+    _space_suppressed = False
+    space_held = False
 
 
 def _keyboard_hook_proc(nCode, wParam, lParam):
-    global _win_suppressed, win_held
+    global _space_suppressed, space_held
     try:
         if nCode >= 0 and _state_ref is not None:
             data = ctypes.cast(lParam, ctypes.POINTER(_KBDLLHOOKSTRUCT)).contents
             vk = data.vkCode
-            is_win = vk in (VK_LWIN, VK_RWIN)
 
-            if is_win and wParam in (WM_KEYDOWN, WM_SYSKEYDOWN):
-                if _win_suppressed:
-                    return 1  # Already in Ctrl+Win cycle — suppress repeats
-                # Check if Ctrl is currently held
+            # Ignore injected events (e.g. SendInput from type_text) so typed
+            # Space characters don't re-trigger recording.
+            if data.flags & LLKHF_INJECTED:
+                return _CallNextHookEx(None, nCode, wParam, lParam)
+
+            if vk == VK_SPACE and wParam == WM_KEYDOWN:
+                if _space_suppressed:
+                    return 1  # Already in Ctrl+Shift+Space cycle — suppress repeats
                 user32 = ctypes.windll.user32
                 ctrl_down = user32.GetAsyncKeyState(VK_CONTROL) & 0x8000
-                if ctrl_down:
-                    _win_suppressed = True
-                    win_held = True
-                    # Fire hotkey on main thread via PostMessage (WM_APP+1)
+                shift_down = user32.GetAsyncKeyState(VK_SHIFT) & 0x8000
+                if ctrl_down and shift_down:
+                    _space_suppressed = True
+                    space_held = True
                     user32.PostMessageW(None, 0x8001, 0, 0)
-                    return 1  # Suppress — prevents Start Menu
+                    return 1  # Suppress Space so it doesn't type into the window
 
-            if is_win and wParam in (WM_KEYUP, WM_SYSKEYUP) and _win_suppressed:
-                _win_suppressed = False
-                win_held = False
-                return 1  # Suppress release too — prevents Start Menu flash
+            if vk == VK_SPACE and wParam == WM_KEYUP and _space_suppressed:
+                _space_suppressed = False
+                space_held = False
+                return 1  # Suppress release too
     except Exception:
         pass
     return _CallNextHookEx(None, nCode, wParam, lParam)

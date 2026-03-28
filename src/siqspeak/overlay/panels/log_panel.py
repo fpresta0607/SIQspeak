@@ -104,7 +104,7 @@ def _render_log_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     )
 
     draw.text((20, 14), "Transcription Log", fill=(*WHITE, 255), font=font_header)
-    draw.text((20, 42), "Hold Ctrl+Win to dictate  \u2022  Release to transcribe",
+    draw.text((20, 42), "Hold Ctrl+Shift+Space to dictate  \u2022  Release to transcribe",
               fill=(*GRAY, 200), font=font_sub)
     draw.line([(20, LOG_HEADER_H - 4), (panel_w - 20, LOG_HEADER_H - 4)], fill=(*GRAY, 100))
 

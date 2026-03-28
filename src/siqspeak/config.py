@@ -72,10 +72,10 @@ DEFAULT_COMPUTE_TYPE = "int8"
 DEFAULT_HAS_CUDA = False
 
 # ---------------------------------------------------------------------------
-# Win32 hotkey: Ctrl+Win (via low-level keyboard hook)
+# Win32 hotkey: Ctrl+Shift+Space (via low-level keyboard hook)
 # ---------------------------------------------------------------------------
-VK_LWIN = 0x5B             # left Windows key
-VK_RWIN = 0x5C             # right Windows key
+VK_SHIFT = 0x10            # either Shift key
+VK_SPACE = 0x20            # Space bar
 VK_CONTROL = 0x11          # either Ctrl key
 
 # ---------------------------------------------------------------------------
