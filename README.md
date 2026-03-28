@@ -6,7 +6,7 @@ Powered by OpenAI's [Whisper](https://github.com/openai/whisper) model running l
 
 ## Features
 
-- **Hold-to-talk** - Hold `Ctrl+Win` to record, release to transcribe
+- **Hold-to-talk** - Hold `Ctrl+Shift+Space` to record, release to transcribe
 - **Auto-type** - Transcribed text is typed directly into whatever window was active
 - **100% local** - Whisper runs on your CPU, nothing leaves your machine
 - **System tray** - Runs quietly in the background, right-click to quit
@@ -75,8 +75,8 @@ A small floating pill will appear on your screen and a tray icon will show in th
 
 | Action | What happens |
 |--------|-------------|
-| **Hold** `Ctrl+Win` | Recording starts - pill expands with cyan animated dots |
-| **Release** `Ctrl+Win` | Recording stops, transcription begins - dots turn white |
+| **Hold** `Ctrl+Shift+Space` | Recording starts - pill expands with cyan animated dots |
+| **Release** `Ctrl+Shift+Space` | Recording stops, transcription begins - dots turn white |
 | Transcription completes | Text is typed into the window that was active when you started recording |
 | **Hover** the idle pill | Shows transcription history panel |
 | **Click copy icon** in history | Copies that transcription to clipboard |
@@ -109,7 +109,7 @@ Settings are managed via the overlay UI. Constants live in `src/siqspeak/config.
 |---------|---------|-------------|
 | `MODEL_NAME` | `"tiny"` | Whisper model size (`tiny`, `base`, `small`, `medium`, `large-v3`) |
 | `SAMPLE_RATE` | `16000` | Audio sample rate in Hz |
-| `HOTKEY` | `Ctrl+Win` | Hold-to-record hotkey |
+| `HOTKEY` | `Ctrl+Shift+Space` | Hold-to-record hotkey |
 
 Larger models are more accurate but slower. The `tiny` model works well for English dictation on most hardware.
 
@@ -130,7 +130,7 @@ Make sure you extracted the ZIP file first (don't run setup.bat from inside the 
 Python isn't installed or isn't in your PATH. Reinstall Python from [python.org](https://www.python.org/downloads/) and make sure to check **"Add Python to PATH"** during installation. Restart your computer after installing.
 
 ### "Failed to register hotkey" on startup
-Another application is using `Ctrl+Win`. Close the conflicting app or change the hotkey constants in `src/siqspeak/config.py`.
+Another application is using `Ctrl+Shift+Space`. Close the conflicting app or change the hotkey constants in `src/siqspeak/config.py`.
 
 ### Model download fails
 The speech model downloads from Hugging Face on first run (~75 MB). If it fails:
