@@ -29,7 +29,6 @@ class AppState:
     download_error_time: float = 0.0
     device: str = "cpu"
     compute_type: str = "int8"
-    has_cuda: bool = False
 
     # Microphone
     mic_device: int | None = None
@@ -104,7 +103,6 @@ class AppState:
     transcribed_idx: int = 0
     stream_focus_done: bool = False
     stream_texts: list[str] = field(default_factory=list)
-    prev_chunk_tail: list[str] = field(default_factory=list)
 
     # Tray
     icon: Any = None  # pystray.Icon

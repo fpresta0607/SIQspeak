@@ -25,24 +25,8 @@ log = logging.getLogger("siqspeak")
 MIC_ROW_H = 32
 
 
-def _draw_toggle_pill(draw: ImageDraw.Draw, x: int, y: int, w: int, h: int,
-                      is_on: bool, font_toggle) -> None:
-    """Draw an ON/OFF toggle pill at the given position."""
-    if is_on:
-        draw.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=(*CYAN, 255))
-        knob_x = x + w - h + 4
-        draw.ellipse([knob_x, y + 4, knob_x + h - 8, y + h - 4],
-                     fill=(255, 255, 255, 255))
-        draw.text((x + 8, y + 6), "ON", font=font_toggle, fill=(15, 20, 35, 255))
-    else:
-        draw.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=(*GRAY, 160))
-        knob_x = x + 4
-        draw.ellipse([knob_x, y + 4, knob_x + h - 8, y + h - 4], fill=(*GRAY, 255))
-        draw.text((x + w - 30, y + 6), "OFF", font=font_toggle, fill=(*GRAY, 255))
-
-
 def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
-    """Render settings panel with stream toggle, GPU toggle, mic dropdown, and Quit."""
+    """Render settings panel with mic dropdown and Quit."""
     panel_w = _settings_panel_width()
     row_h = 44
     quit_btn_h = 44
@@ -50,13 +34,11 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     try:
         font_title = ImageFont.truetype("seguisb.ttf", 22)
         font = ImageFont.truetype("seguisb.ttf", 17)
-        font_toggle = ImageFont.truetype("seguisb.ttf", 14)
         font_btn = ImageFont.truetype("seguisb.ttf", 18)
         font_mic = ImageFont.truetype("seguisb.ttf", 14)
     except OSError:
         font_title = ImageFont.load_default()
         font = font_title
-        font_toggle = font
         font_btn = font
         font_mic = font
 
@@ -76,8 +58,7 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
         mic_section_h = row_h
 
     # Calculate panel height
-    toggle_rows = 1 if state.has_cuda else 0  # gpu only
-    panel_h = SETTINGS_HEADER_H + 8 + row_h * toggle_rows + mic_section_h + 12 + quit_btn_h + 20
+    panel_h = SETTINGS_HEADER_H + 8 + mic_section_h + 12 + quit_btn_h + 20
 
     img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -92,14 +73,6 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
               fill=(*GRAY, 100))
 
     cur_y = SETTINGS_HEADER_H + 8
-    pill_w, pill_h = 56, 28
-
-    # --- GPU toggle row (only if CUDA detected) ---
-    if state.has_cuda:
-        draw.text((20, cur_y + 10), "Use GPU", font=font, fill=(230, 240, 255, 255))
-        _draw_toggle_pill(draw, panel_w - pill_w - 20, cur_y + 8, pill_w, pill_h,
-                          state.device == "cuda", font_toggle)
-        cur_y += row_h
 
     # --- Mic selector row ---
     chevron = "\u25BC" if state.mic_expanded else "\u25B6"

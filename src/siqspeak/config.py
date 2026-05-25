@@ -55,21 +55,7 @@ STREAM_MODE = False                 # opt-in; toggled via settings panel
 SILENCE_RMS_THRESHOLD = 0.015       # raw RMS below this = silence
 SILENCE_DURATION = 0.7              # seconds of silence before dispatching chunk
 MIN_CHUNK_DURATION = 0.5            # minimum audio length (seconds) to transcribe
-OVERLAP_FRAMES = 5                  # ~160ms of audio callbacks prepended for boundary context
-OVERLAP_TAIL_WORDS = 4              # words kept from previous chunk for dedup comparison
 
-# Known Whisper hallucination phrases (matched after lowercasing + stripping punctuation)
-_HALLUCINATION_PATTERNS = {
-    "thank you", "thanks for watching", "subscribe",
-    "like and subscribe", "see you next time",
-    "please subscribe", "you", "bye", "goodbye",
-    "thanks for watching and see you next time",
-}
-
-# Device defaults (not globals — just default values)
-DEFAULT_DEVICE = "cpu"
-DEFAULT_COMPUTE_TYPE = "int8"
-DEFAULT_HAS_CUDA = False
 
 # ---------------------------------------------------------------------------
 # Win32 hotkey: Ctrl+Shift+Space (via low-level keyboard hook)
@@ -237,11 +223,6 @@ def save_config(values: dict) -> None:
         log.exception("Failed to save config")
 
 
-def device_settings(use_cuda: bool) -> tuple[str, str]:
-    """Return (device, compute_type) for CUDA or CPU."""
-    return ("cuda", "float16") if use_cuda else ("cpu", "int8")
-
-
 def save_state_config(state: AppState) -> None:
     """Persist current state values to config.json."""
     save_config({
@@ -249,6 +230,5 @@ def save_state_config(state: AppState) -> None:
         "stream_mode": state.stream_mode,
         "pill_x": state.pill_user_x,
         "pill_y": state.pill_user_y,
-        "device": state.device,
         "mic_device": state.mic_device,
     })

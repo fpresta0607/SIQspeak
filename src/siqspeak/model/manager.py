@@ -7,8 +7,8 @@ import time
 from faster_whisper import WhisperModel
 
 from siqspeak._frozen import bundled_model_path
-from siqspeak.config import MODEL_SIZES_MB, device_settings, save_state_config
-from siqspeak.hf_auth import has_token, is_auth_error, validate_token
+from siqspeak.config import MODEL_SIZES_MB, save_state_config
+from siqspeak.hf_auth import has_token, is_auth_error
 from siqspeak.state import AppState
 
 log = logging.getLogger("siqspeak")
@@ -39,7 +39,7 @@ def _check_internet() -> bool:
 
 def _direct_download_model(name: str, state=None) -> str | None:
     """Download model files directly from HuggingFace CDN without hub auth.
-    
+
     Falls back to raw URL downloads when huggingface_hub auth fails.
     Returns the model directory path, or None on failure.
     """
@@ -153,31 +153,13 @@ def _start_model_load(state: AppState, name: str) -> None:
             # Use bundled model path if available (frozen/installer build)
             model_path = bundled_model_path(name) or name
             new_model = WhisperModel(model_path, device=state.device, compute_type=state.compute_type)
-            # Validate CUDA actually works by running minimal inference
-            if state.device == "cuda":
-                import numpy as np
-                _silence = np.zeros(16000, dtype=np.float32)
-                list(new_model.transcribe(_silence, beam_size=1)[0])
             state.model = new_model
             state.loaded_model_name = name
             state.download_error = None
             save_state_config(state)
             log.info("Model loaded: %s on %s", name, state.device)
         except Exception:
-            if state.device == "cuda":
-                log.warning("CUDA unavailable, falling back to CPU")
-                state.device, state.compute_type = device_settings(False)
-                try:
-                    new_model = WhisperModel(name, device=state.device, compute_type=state.compute_type)
-                    state.model = new_model
-                    state.loaded_model_name = name
-                    state.download_error = None
-                    save_state_config(state)
-                    log.info("Model loaded: %s on cpu (CUDA fallback)", name)
-                except Exception:
-                    log.exception("Failed to load model %s", name)
-            else:
-                log.exception("Failed to load model %s", name)
+            log.exception("Failed to load model %s", name)
         finally:
             state.model_loading = False
 
@@ -267,41 +249,21 @@ def _do_download_and_load(state: AppState, name: str) -> None:
                 log.warning("HF Hub download failed (%s), trying direct download...", hub_err)
                 model_path = _direct_download_model(name, state)
                 if not model_path:
-                    raise RuntimeError(f"Both HF Hub and direct download failed for {name}")
+                    raise RuntimeError(f"Both HF Hub and direct download failed for {name}") from hub_err
 
             state.download_progress = 1.0
             log.info("Download complete: %s, loading...", name)
 
             new_model = WhisperModel(model_path, device=state.device, compute_type=state.compute_type)
-            # Validate CUDA inference (cuBLAS is only loaded at transcribe time)
-            if state.device == "cuda":
-                import numpy as np
-                _silence = np.zeros(16000, dtype=np.float32)
-                list(new_model.transcribe(_silence, beam_size=1)[0])
             state.model = new_model
             state.loaded_model_name = name
             state.download_error = None
             save_state_config(state)
             log.info("Model loaded: %s on %s", name, state.device)
         except Exception:
-            if state.device == "cuda" and model_path:
-                log.warning("CUDA unavailable after download, falling back to CPU")
-                state.device, state.compute_type = device_settings(False)
-                try:
-                    new_model = WhisperModel(model_path, device=state.device, compute_type=state.compute_type)
-                    state.model = new_model
-                    state.loaded_model_name = name
-                    state.download_error = None
-                    save_state_config(state)
-                    log.info("Model loaded: %s on cpu (CUDA fallback)", name)
-                except Exception:
-                    state.download_error = "Load failed"
-                    state.download_error_time = time.time()
-                    log.exception("Failed to load model %s after CPU fallback", name)
-            else:
-                state.download_error = "Download failed"
-                state.download_error_time = time.time()
-                log.exception("Failed to download/load model %s", name)
+            state.download_error = "Download failed"
+            state.download_error_time = time.time()
+            log.exception("Failed to download/load model %s", name)
         finally:
             state.model_loading = False
 
