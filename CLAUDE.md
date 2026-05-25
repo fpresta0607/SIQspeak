@@ -40,15 +40,14 @@ src/siqspeak/
   __init__.py              # __version__, __app_name__
   __main__.py              # python -m siqspeak entry
   app.py                   # main() + message_loop() — orchestrator
-  config.py                # constants, paths, colors, dimensions, config persistence, device_settings(), save_state_config()
+  config.py                # constants, paths, colors, dimensions, config persistence, save_state_config()
   state.py                 # AppState dataclass — all mutable state (~100 fields)
   logging_setup.py         # configure_logging()
   hotkey.py                # on_hotkey_down(), _wait_for_release(), quit_app()
-  text_processing.py       # postprocess_transcription() — spoken coding syntax → symbols
   tray.py                  # load_tray_icon(), make_icon(), set_state()
   audio/
     recording.py           # start_recording(), stop_and_enqueue(), transcription_worker_loop(), log persistence
-    streaming.py           # _transcription_worker(), _strip_overlap()
+    streaming.py           # _transcription_worker()
     devices.py             # _get_input_devices()
   model/
     manager.py             # _start_model_load(), _start_model_download_and_load(), cache check
@@ -59,7 +58,7 @@ src/siqspeak/
       __init__.py          # _hide_all_panels(), _toggle_panel(), _show_panel_window(), _update_panel_content()
       log_panel.py         # transcription log panel
       model_panel.py       # model selector panel
-      settings_panel.py    # settings panel (stream, GPU, mic, quit)
+      settings_panel.py    # settings panel (mic, quit)
       welcome.py           # welcome tooltip
   interaction/
     click_handlers.py      # idle pill click, model click, settings click
@@ -83,7 +82,7 @@ Root `dictate.py` is a 3-line shim for backward compatibility with existing shor
 **Hotkey cycle (hold-to-record):**
 1. Hold Ctrl+Shift+Space → `WH_KEYBOARD_LL` hook in `win32/hooks.py` detects Ctrl+Shift+Space, suppresses the Space keystroke, posts `WM_APP+1` to message loop → `on_hotkey_down()` → `start_recording()` opens mic stream, saves `GetForegroundWindow()` as paste target (own overlay/panel windows filtered out), pill expands to active mode
 2. Release Space → `_wait_for_release()` polling thread detects key-up (120s safety timeout) → `stop_and_enqueue()` stops mic, snapshots audio + target window, enqueues for async processing, hotkey released immediately
-3. Background `transcription_worker_loop` dequeues audio → runs Whisper inference → postprocesses → restores foreground window → types text via `SendInput` Unicode events → pill returns to idle
+3. Background `transcription_worker_loop` dequeues audio → runs Whisper inference → logs raw text → restores foreground window → types text via `SendInput` Unicode events → pill returns to idle
 
 **Overlay (two-window architecture):**
 Two pre-created overlay windows with immutable extended styles — no runtime `SetWindowLongW` toggling:
@@ -97,10 +96,10 @@ All panels share consistent styling: 14px corner radius, opaque background, head
 
 - **Log panel:** Recent transcriptions with timestamps and copy buttons. Persisted to `transcriptions.jsonl`. Mouse wheel scroll via `WH_MOUSE_LL` hook.
 - **Model selector:** Cached models load on click. Uncached models require two-click confirmation with progress bar.
-- **Settings panel:** Stream mode toggle, GPU toggle (CUDA only), mic selector, Quit button.
+- **Settings panel:** Mic selector and Quit button.
 
 **Streaming transcription (opt-in):**
-When enabled, silence detection (~0.7s) dispatches audio to `_transcription_worker` via `queue.Queue` with overlap for boundary context. Hallucination filter + `_strip_overlap()` dedup. Types results incrementally.
+When enabled, silence detection (~0.7s) dispatches audio to `_transcription_worker` via `queue.Queue`. Streaming types raw Whisper text incrementally.
 
 **Threading model:**
 - Main thread: Win32 message loop (`GetMessageW`)
@@ -113,9 +112,9 @@ When enabled, silence detection (~0.7s) dispatches audio to `_transcription_work
 
 ## Configuration
 
-Settings persist to `config.json` (gitignored). Auto-detects GPU on first launch. `setup.bat` auto-detects NVIDIA GPU via `nvidia-smi` and installs CUDA runtime packages; app validates CUDA at model load with silent CPU fallback.
+Settings persist to `config.json` (gitignored). Transcription runs CPU-only with `int8` compute.
 
-**Persisted:** model name, stream mode, pill position, device (cuda/cpu), mic device index.
+**Persisted:** model name, stream mode, pill position, mic device index.
 
 **Constants in `config.py`:**
 - `MODEL_NAME` — `"tiny"` default
@@ -124,15 +123,12 @@ Settings persist to `config.json` (gitignored). Auto-detects GPU on first launch
 - `SILENCE_RMS_THRESHOLD` — `0.015`
 - `SILENCE_DURATION` — `0.7s`
 - `MIN_CHUNK_DURATION` — `0.5s`
-- `OVERLAP_FRAMES` — `5` callbacks
-- `OVERLAP_TAIL_WORDS` — `4` words
 
 ## Dependencies
 
 Canonical source: `pyproject.toml`. Legacy `requirements.txt` kept for backward compat.
 
 Runtime: `faster-whisper`, `sounddevice`, `numpy`, `pystray`, `pillow`, `pyperclip`
-GPU (optional): `nvidia-cublas-cu12`, `nvidia-cudnn-cu12` — auto-installed by `setup.bat` if NVIDIA GPU detected
 Dev: `ruff`, `pyright`, `pytest`, `pytest-cov`
 
 ## Logging
