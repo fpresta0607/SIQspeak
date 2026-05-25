@@ -14,7 +14,6 @@ from siqspeak.config import (
     MODEL_PANEL_HEADER_H,
     MODEL_PANEL_ROW_H,
     SETTINGS_HEADER_H,
-    device_settings,
     save_state_config,
 )
 from siqspeak.interaction.hover import _is_cursor_over_hwnd
@@ -138,7 +137,6 @@ def _handle_model_click(state: AppState) -> None:
         _is_model_cached,
         _start_model_download_and_load,
         _start_model_load,
-        _retry_download_after_auth,
     )
     from siqspeak.overlay.panels.model_panel import _show_model_panel
 
@@ -319,8 +317,7 @@ def _handle_hf_auth_click(state: AppState) -> None:
 
 
 def _handle_settings_click(state: AppState) -> None:
-    """Detect click on stream toggle, GPU toggle, mic dropdown, or Quit."""
-    from siqspeak.model.manager import _start_model_load
+    """Detect click on mic dropdown or Quit."""
     from siqspeak.overlay.panels import _show_panel_window
     from siqspeak.overlay.panels.settings_panel import MIC_ROW_H, _render_settings_panel
 
@@ -356,9 +353,7 @@ def _handle_settings_click(state: AppState) -> None:
         _show_panel_window(state, state.settings_panel_hwnd, buf, pw, ph)
 
     # Calculate zone boundaries
-    gpu_top = row_start if state.has_cuda else -1
-    gpu_bottom = gpu_top + row_h if state.has_cuda else -1
-    mic_top = gpu_bottom if state.has_cuda else row_start
+    mic_top = row_start
     mic_bottom = mic_top + row_h
 
     # Mic dropdown items (below mic header row when expanded)
@@ -370,15 +365,8 @@ def _handle_settings_click(state: AppState) -> None:
 
     quit_top = mic_list_bottom + 12
 
-    # --- GPU toggle ---
-    if state.has_cuda and gpu_top <= ry < gpu_bottom:
-        state.device, state.compute_type = device_settings(state.device != "cuda")
-        log.info("GPU toggled: device=%s, compute_type=%s", state.device, state.compute_type)
-        save_state_config(state)
-        _rerender()
-        _start_model_load(state, state.loaded_model_name)
     # --- Mic header row: toggle dropdown ---
-    elif mic_top <= ry < mic_bottom:
+    if mic_top <= ry < mic_bottom:
         state.mic_expanded = not state.mic_expanded
         _rerender()
     # --- Mic device list item ---

@@ -60,26 +60,7 @@ echo   [OK] Dependencies installed.
 echo.
 
 :: ------------------------------------------------------------------
-:: 4. GPU detection
-:: ------------------------------------------------------------------
-set HAS_GPU=0
-nvidia-smi >nul 2>&1
-if !errorlevel! neq 0 goto :no_gpu
-echo   [OK] NVIDIA GPU detected. Installing CUDA libraries...
-.venv\Scripts\pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
-if !errorlevel! equ 0 set HAS_GPU=1
-if !HAS_GPU! equ 1 echo   [OK] GPU acceleration enabled.
-if !HAS_GPU! equ 0 echo   [!] GPU install failed. Using CPU.
-goto :gpu_done
-
-:no_gpu
-echo   [--] No NVIDIA GPU detected. Using CPU mode.
-
-:gpu_done
-echo.
-
-:: ------------------------------------------------------------------
-:: 5. HuggingFace Sign-In
+:: 4. HuggingFace Sign-In
 :: ------------------------------------------------------------------
 echo   ------------------------------------------
 echo    HuggingFace Sign-In
@@ -167,7 +148,7 @@ echo.
 echo.
 
 :: ------------------------------------------------------------------
-:: 6. Download default model
+:: 5. Download default model
 :: ------------------------------------------------------------------
 echo   [..] Downloading default speech model -- tiny, about 75 MB
 echo       This may take a minute.
@@ -187,7 +168,7 @@ echo   [!] Model download failed. SIQspeak will retry on first launch.
 echo.
 
 :: ------------------------------------------------------------------
-:: 7. Desktop shortcut
+:: 6. Desktop shortcut
 :: ------------------------------------------------------------------
 set /p SHORTCUT="   Create a desktop shortcut? [Y/N]: "
 if /i "!SHORTCUT!"=="Y" goto :make_shortcut
@@ -208,7 +189,7 @@ echo   [!] pythonw.exe not found. Shortcut skipped.
 echo.
 
 :: ------------------------------------------------------------------
-:: 8. Run now?
+:: 7. Run now?
 :: ------------------------------------------------------------------
 set /p RUNNOW="   Run SIQspeak now? [Y/N]: "
 if /i "!RUNNOW!"=="Y" goto :run_now

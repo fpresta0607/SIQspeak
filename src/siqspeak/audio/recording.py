@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import queue
-import re
 import threading
 import time
 
@@ -18,13 +17,11 @@ from siqspeak.config import (
     LOG_FILE_PATH,
     LOG_IN_MEMORY_CAP,
     MIN_CHUNK_DURATION,
-    OVERLAP_FRAMES,
     SAMPLE_RATE,
     SILENCE_DURATION,
     SILENCE_RMS_THRESHOLD,
 )
 from siqspeak.state import AppState
-from siqspeak.text_processing import postprocess_transcription
 from siqspeak.tray import set_state
 from siqspeak.win32.text_input import focus_window, type_text
 
@@ -117,7 +114,6 @@ def start_recording(state: AppState) -> None:
         state.transcribed_idx = 0
         state.stream_focus_done = False
         state.stream_texts = []
-        state.prev_chunk_tail = []
         state.stream_worker = threading.Thread(
             target=_transcription_worker, args=(state,), daemon=True,
         )
@@ -146,12 +142,9 @@ def start_recording(state: AppState) -> None:
             # Silence threshold just hit -- dispatch accumulated speech audio
             end_idx = len(state.audio_chunks) - silence_needed  # exclude trailing silence
             if end_idx > state.transcribed_idx:
-                # Prepend overlap from previous chunk for word-boundary context
-                overlap_start = max(state.transcribed_idx - OVERLAP_FRAMES, 0)
-                has_overlap = overlap_start < state.transcribed_idx
-                segment = state.audio_chunks[overlap_start:end_idx]
+                segment = state.audio_chunks[state.transcribed_idx:end_idx]
                 state.transcribed_idx = end_idx
-                state.stream_queue.put(("segment", (segment, has_overlap)))
+                state.stream_queue.put(("segment", segment))
             state.silence_count = 0  # reset so it doesn't re-trigger each tick
 
     mic_kwargs: dict = dict(
@@ -236,7 +229,7 @@ def stop_and_enqueue(state: AppState) -> None:
 def _transcribe_and_type(
     state: AppState, audio: np.ndarray, target_hwnd: int | None,
 ) -> None:
-    """Run Whisper inference, postprocess, log, and type text.
+    """Run Whisper inference, log, and type raw text.
 
     Called by the background transcription worker — never on the hotkey thread.
     """
@@ -246,29 +239,17 @@ def _transcribe_and_type(
         vad_filter=True,
         vad_parameters=dict(min_silence_duration_ms=500),
         no_speech_threshold=0.6,
+        temperature=0.0,
+        without_timestamps=True,
+        condition_on_previous_text=False,
+        suppress_blank=True,
     )
-    # Deduplicate words at VAD segment boundaries
     seg_texts = [seg.text.strip() for seg in segments if seg.text.strip()]
-    if len(seg_texts) > 1:
-        def _norm(w: str) -> str:
-            return re.sub(r"[^a-z0-9]", "", w.lower())
-        deduped = [seg_texts[0]]
-        for seg_text in seg_texts[1:]:
-            prev_words = deduped[-1].split()
-            next_words = seg_text.split()
-            if (prev_words and next_words
-                    and _norm(prev_words[-1]) == _norm(next_words[0])):
-                deduped.append(" ".join(next_words[1:]))
-            else:
-                deduped.append(seg_text)
-        text = " ".join(t for t in deduped if t).strip()
-    else:
-        text = " ".join(seg_texts).strip()
+    text = " ".join(seg_texts).strip()
     elapsed = time.perf_counter() - t0
     log.info("TRANSCRIBE %.3fs -> %s", elapsed, text)
 
     if text:
-        text = postprocess_transcription(text)
         entry = {
             "text": text,
             "timestamp": time.strftime("%H:%M:%S"),

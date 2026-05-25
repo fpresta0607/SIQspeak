@@ -29,7 +29,6 @@ from siqspeak.config import (
     WM_APP_STATE,
     WM_TIMER,
     _load_config,
-    device_settings,
 )
 from siqspeak.hotkey import on_hotkey_down, quit_app
 from siqspeak.interaction.click_handlers import (
@@ -409,17 +408,9 @@ def main() -> None:
     # Load persisted transcription log
     _load_log(state)
 
-    # GPU auto-detection
-    import ctranslate2
-    state.has_cuda = ctranslate2.get_cuda_device_count() > 0
-    saved_device = cfg.get("device")
-    if saved_device == "cuda" and state.has_cuda:
-        state.device, state.compute_type = device_settings(True)
-    elif saved_device == "cpu":
-        state.device, state.compute_type = device_settings(False)
-    else:
-        state.device, state.compute_type = device_settings(state.has_cuda)
-    log.info("Device: %s (%s), CUDA available: %s", state.device, state.compute_type, state.has_cuda)
+    state.device = "cpu"
+    state.compute_type = "int8"
+    log.info("Device: %s (%s)", state.device, state.compute_type)
 
     # Cache available microphones
     state.mic_devices = _get_input_devices()
@@ -435,19 +426,9 @@ def main() -> None:
     model_path = bundled_model_path(model_name) or model_name
     try:
         state.model = WhisperModel(model_path, device=state.device, compute_type=state.compute_type)
-        # Validate CUDA actually works by running minimal inference
-        if state.device == "cuda":
-            import numpy as np
-            _silence = np.zeros(16000, dtype=np.float32)
-            list(state.model.transcribe(_silence, beam_size=1)[0])
     except Exception:
-        if state.device == "cuda":
-            log.warning("GPU load failed, falling back to CPU")
-            state.device, state.compute_type = device_settings(False)
-            state.model = WhisperModel(model_path, device=state.device, compute_type=state.compute_type)
-        else:
-            log.exception("Failed to load Whisper model")
-            sys.exit(1)
+        log.exception("Failed to load Whisper model")
+        sys.exit(1)
     log.info("Model ready in %.2fs", time.perf_counter() - t0)
 
     # Async transcription worker — hotkey enqueues audio, worker transcribes + types

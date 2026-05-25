@@ -56,7 +56,6 @@ You should see something like `Python 3.12.x`. If you get an error, restart your
 3. A black command window will open and walk you through the setup:
    - It creates a Python virtual environment
    - Installs all dependencies
-   - Detects if you have an NVIDIA GPU (optional, for faster transcription)
    - Asks if you want to pre-download the speech model (~75 MB)
    - Asks if you want a desktop shortcut
    - Asks if you want to run SIQspeak right away
