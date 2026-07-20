@@ -121,7 +121,7 @@ def test_stable_dimensions_and_premultiplied_bgra() -> None:
     state.transcription_log = [_entry("consistent output")]
 
     buf1, w1, h1 = _render_log_panel(state)
-    buf2, w2, h2 = _render_log_panel(state)
+    _, w2, h2 = _render_log_panel(state)
 
     assert (w1, h1) == (w2, h2)
     assert buf1.shape == (h1, w1, 4)

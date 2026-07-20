@@ -141,10 +141,11 @@ def start_recording(state: AppState) -> None:
         if state.silence_count == silence_needed:
             # Silence threshold just hit -- dispatch accumulated speech audio
             end_idx = len(state.audio_chunks) - silence_needed  # exclude trailing silence
-            if end_idx > state.transcribed_idx:
+            stream_queue = state.stream_queue
+            if end_idx > state.transcribed_idx and stream_queue is not None:
                 segment = state.audio_chunks[state.transcribed_idx:end_idx]
                 state.transcribed_idx = end_idx
-                state.stream_queue.put(("segment", segment))
+                stream_queue.put(("segment", segment))
             state.silence_count = 0  # reset so it doesn't re-trigger each tick
 
     mic_kwargs: dict = dict(
@@ -223,7 +224,9 @@ def stop_and_enqueue(state: AppState) -> None:
         return
 
     set_state(state, "transcribing")
-    state.transcription_queue.put((audio, target_hwnd))
+    transcription_queue = state.transcription_queue
+    if transcription_queue is not None:
+        transcription_queue.put((audio, target_hwnd))
 
 
 def _transcribe_and_type(
@@ -295,8 +298,11 @@ def _transcribe_and_type(
 
 def transcription_worker_loop(state: AppState) -> None:
     """Background worker — dequeues audio jobs and runs transcription + typing."""
+    transcription_queue = state.transcription_queue
+    if transcription_queue is None:
+        return
     while True:
-        job = state.transcription_queue.get()
+        job = transcription_queue.get()
         if job is None:
             break  # Shutdown signal
         audio, target_hwnd = job
@@ -310,6 +316,7 @@ def transcription_worker_loop(state: AppState) -> None:
 
 def _stop_and_transcribe_streaming(state: AppState) -> None:
     """Flush remaining audio through worker, then tear down."""
+    stream_queue = state.stream_queue
     try:
         remaining = state.audio_chunks[state.transcribed_idx:]
         if remaining:
@@ -317,17 +324,18 @@ def _stop_and_transcribe_streaming(state: AppState) -> None:
             duration = len(audio) / SAMPLE_RATE
             log.info("STREAM FLUSH -- %.1fs remaining", duration)
 
-            if duration >= MIN_CHUNK_DURATION:
+            if duration >= MIN_CHUNK_DURATION and stream_queue is not None:
                 set_state(state, "transcribing")
                 done_event = threading.Event()
-                state.stream_queue.put(("flush", (remaining, done_event)))
+                stream_queue.put(("flush", (remaining, done_event)))
                 done_event.wait(timeout=30.0)
             else:
                 log.info("STREAM FLUSH: too short, skip")
         else:
             log.info("STREAM FLUSH: nothing remaining")
 
-        state.stream_queue.put(("stop", None))
+        if stream_queue is not None:
+            stream_queue.put(("stop", None))
         if state.stream_worker:
             state.stream_worker.join(timeout=5.0)
 

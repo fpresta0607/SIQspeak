@@ -1,11 +1,8 @@
 """Tests for overlay state transition architecture (two-window + PostThreadMessageW)."""
 from __future__ import annotations
 
-import pytest
-
 from siqspeak.config import STATE_CODE, STATE_NAME, WM_APP_STATE
 from siqspeak.state import AppState
-
 
 # ---------------------------------------------------------------------------
 # Config constants
@@ -24,7 +21,7 @@ def test_state_code_covers_all_states():
 
 
 def test_wm_app_state_is_in_app_range():
-    """WM_APP range is 0x8000–0xBFFF; our custom message must be in range."""
+    """WM_APP range is 0x8000-0xBFFF; our custom message must be in range."""
     assert 0x8000 <= WM_APP_STATE <= 0xBFFF
 
 

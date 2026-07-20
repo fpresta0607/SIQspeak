@@ -22,7 +22,7 @@ from siqspeak.state import AppState
 log = logging.getLogger("siqspeak")
 
 
-def _is_cursor_over_hwnd(hwnd: int) -> bool:
+def _is_cursor_over_hwnd(hwnd: int | None) -> bool:
     """Check if the mouse cursor is over a window."""
     if not hwnd:
         return False

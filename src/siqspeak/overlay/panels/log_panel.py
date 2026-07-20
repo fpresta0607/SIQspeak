@@ -60,7 +60,11 @@ def _get_font(name: str, size: int) -> ImageFont.FreeTypeFont:
         try:
             _FONT_CACHE[key] = ImageFont.truetype(name, size)
         except OSError:
-            _FONT_CACHE[key] = ImageFont.load_default()
+            # load_default(size) returns a FreeTypeFont at runtime; the stub
+            # widens it to FreeTypeFont | ImageFont, so narrow it back here.
+            fallback = ImageFont.load_default(size)
+            assert isinstance(fallback, ImageFont.FreeTypeFont)
+            _FONT_CACHE[key] = fallback
     return _FONT_CACHE[key]
 
 

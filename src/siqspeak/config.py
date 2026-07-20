@@ -98,7 +98,7 @@ _ICON_GEAR_B64 = "iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAADAUlEQVR4nO2d24
 def _load_icon(b64: str, size: tuple[int, int], color: tuple[int, int, int]) -> Image.Image:
     """Decode a base64 PNG, resize it, and tint to the given RGB color (cached)."""
     data = base64.b64decode(b64)
-    img = Image.open(io.BytesIO(data)).convert("RGBA").resize(size, Image.LANCZOS)
+    img = Image.open(io.BytesIO(data)).convert("RGBA").resize(size, Image.Resampling.LANCZOS)
     # Tint: use source alpha, replace RGB with target color
     _r, _g, _b, a = img.split()
     img = Image.merge("RGBA", (

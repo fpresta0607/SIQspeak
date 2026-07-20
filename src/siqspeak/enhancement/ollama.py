@@ -111,7 +111,7 @@ class OllamaClient:
         """Download a model, reporting fractional progress per streamed event."""
         request = self._build_request("/api/pull", {"model": model, "stream": True})
         try:
-            with urllib.request.urlopen(  # noqa: S310 - loopback enforced in __post_init__
+            with urllib.request.urlopen(
                 request, timeout=self.timeout_seconds
             ) as response:
                 for raw_line in response:
@@ -164,7 +164,7 @@ class OllamaClient:
     ) -> object:
         request = self._build_request(path, payload)
         try:
-            with urllib.request.urlopen(  # noqa: S310 - loopback enforced in __post_init__
+            with urllib.request.urlopen(
                 request, timeout=self.timeout_seconds
             ) as response:
                 body = response.read()

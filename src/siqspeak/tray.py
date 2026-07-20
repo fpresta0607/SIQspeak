@@ -21,7 +21,9 @@ def _find_icon() -> str:
     ]
     # PyInstaller _MEIPASS (bundled assets)
     if getattr(sys, "frozen", False):
-        candidates.insert(0, os.path.join(sys._MEIPASS, "dictate.ico"))
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.insert(0, os.path.join(meipass, "dictate.ico"))
     for p in candidates:
         if os.path.exists(p):
             return p
@@ -35,8 +37,8 @@ def load_tray_icon() -> Image.Image:
         ico_path = _find_icon()
         src = Image.open(ico_path).convert("RGBA")
         _tray_icon_img = (
-            src.resize((128, 128), Image.LANCZOS)
-               .resize((64, 64), Image.LANCZOS)
+            src.resize((128, 128), Image.Resampling.LANCZOS)
+               .resize((64, 64), Image.Resampling.LANCZOS)
                .filter(ImageFilter.UnsharpMask(radius=1.0, percent=60, threshold=2))
         )
     return _tray_icon_img
