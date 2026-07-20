@@ -267,7 +267,7 @@ def _transcribe_and_type(
                 title = window_title(target_hwnd)
             except Exception:
                 title = ""
-            result = state.enhance_prompt(raw_text, title)
+            result = state.enhance_prompt(raw_text, title, target_hwnd)
             final_text = result.final_text
             enhanced = result.enhanced
             selected_skills = result.selected_skills

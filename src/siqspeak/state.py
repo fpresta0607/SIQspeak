@@ -12,7 +12,9 @@ if TYPE_CHECKING:
 class EnhancePrompt(Protocol):
     """Boundary that turns a raw transcript into an enhancement result."""
 
-    def __call__(self, raw_text: str, window_title: str) -> EnhancementResult: ...
+    def __call__(
+        self, raw_text: str, window_title: str, window_hwnd: int | None
+    ) -> EnhancementResult: ...
 
 
 @dataclass
