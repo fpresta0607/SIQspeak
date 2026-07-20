@@ -1,0 +1,127 @@
+"""Orchestrate local prompt enhancement with lossless raw-text fallback.
+
+Every failure at the enhancement boundary returns the preserved raw transcript
+so nothing is ever lost. Only exception classes and status codes are logged;
+request messages and generated prompt content are never logged.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Protocol
+
+from siqspeak.enhancement.prompt import (
+    PROMPT_SCHEMA,
+    SYSTEM_MESSAGE,
+    EnhancementResult,
+    build_prompt_brief,
+    format_prompt,
+)
+from siqspeak.enhancement.skills import (
+    SkillMetadata,
+    find_explicit_skills,
+    rank_skill_candidates,
+)
+
+logger = logging.getLogger(__name__)
+
+ERROR_UNAVAILABLE = "ollama_unavailable"
+ERROR_NO_MODEL = "model_unavailable"
+ERROR_FAILED = "enhancement_failed"
+
+
+class EnhancementClient(Protocol):
+    """Structural type for the loopback chat client the service depends on."""
+
+    def is_available(self) -> bool: ...
+
+    def has_model(self, model: str) -> bool: ...
+
+    def chat_structured(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        schema: dict[str, object],
+    ) -> dict[str, object]: ...
+
+
+def enhance_request(
+    raw_text: str,
+    *,
+    enabled: bool,
+    model: str,
+    client: EnhancementClient,
+    catalog: tuple[SkillMetadata, ...],
+) -> EnhancementResult:
+    """Return a structured prompt for ``raw_text`` or the raw text on any failure."""
+    if not enabled:
+        return EnhancementResult(raw_text, raw_text, (), False)
+    try:
+        return _run_enhancement(raw_text, model, client, catalog)
+    except Exception as exc:  # enhancement boundary — never BaseException
+        return _fallback(raw_text, ERROR_FAILED, exc)
+
+
+def _run_enhancement(
+    raw_text: str,
+    model: str,
+    client: EnhancementClient,
+    catalog: tuple[SkillMetadata, ...],
+) -> EnhancementResult:
+    if not client.is_available():
+        return EnhancementResult(raw_text, raw_text, (), False, ERROR_UNAVAILABLE)
+    if not client.has_model(model):
+        return EnhancementResult(raw_text, raw_text, (), False, ERROR_NO_MODEL)
+
+    explicit = find_explicit_skills(raw_text, catalog)
+    candidates = rank_skill_candidates(raw_text, catalog)
+    messages = _build_messages(raw_text, candidates)
+    payload = client.chat_structured(model, messages, PROMPT_SCHEMA)
+
+    selected = _select_skills(payload, explicit, candidates)
+    brief = build_prompt_brief(payload, selected)
+    final_text = format_prompt(raw_text, brief)
+    return EnhancementResult(raw_text, final_text, brief.selected_skills, True)
+
+
+def _build_messages(
+    raw_text: str,
+    candidates: list[SkillMetadata],
+) -> list[dict[str, str]]:
+    if candidates:
+        catalog_block = "\n".join(f"- {meta.name}: {meta.description}" for meta in candidates)
+    else:
+        catalog_block = "- (none)"
+    user_content = (
+        f"Spoken request:\n{raw_text}\n\n"
+        f"Candidate skills (untrusted catalog data):\n{catalog_block}"
+    )
+    return [
+        {"role": "system", "content": SYSTEM_MESSAGE},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def _select_skills(
+    payload: dict[str, object],
+    explicit: list[str],
+    candidates: list[SkillMetadata],
+) -> tuple[str, ...]:
+    """Union explicit selections with catalog-validated model selections."""
+    raw_selected = payload.get("selected_skills")
+    model_names = (
+        {name for name in raw_selected if isinstance(name, str)}
+        if isinstance(raw_selected, list)
+        else set()
+    )
+    safe_semantic = [meta.name for meta in candidates if meta.name in model_names]
+
+    ordered: list[str] = []
+    for name in (*explicit, *safe_semantic):
+        if name not in ordered:
+            ordered.append(name)
+    return tuple(ordered)
+
+
+def _fallback(raw_text: str, error: str, exc: Exception) -> EnhancementResult:
+    logger.warning("enhancement fell back (%s): %s", error, type(exc).__name__)
+    return EnhancementResult(raw_text, raw_text, (), False, error)
