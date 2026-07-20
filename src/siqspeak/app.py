@@ -375,23 +375,29 @@ def _foreground_window_title() -> str:
 
 
 def _install_enhancer(state: AppState) -> None:
-    """Initialize the Ollama client, workspace root, and skill catalog once and
-    expose a typed enhancement boundary on the state.
+    """Expose a typed enhancement boundary on the state.
 
-    The boundary is called from the transcription worker; constructing the client
-    and catalog here keeps ``_transcribe_and_type`` free of I/O setup. Any setup
-    failure leaves ``enhance_prompt`` unset, which safely disables enhancement.
+    The boundary is called from the transcription worker. The workspace root and
+    skill catalog are resolved *per request* so auto-detection reflects the editor
+    focused at dictation time and a manually picked workspace takes effect without
+    a restart. The loopback Ollama client is constructed once (it is stateless).
+    Any setup failure leaves ``enhance_prompt`` unset, which safely disables
+    enhancement.
     """
     try:
         client = OllamaClient()
-        workspace = resolve_workspace(state.workspace_override, _foreground_window_title())
-        state.workspace_detected_root = str(workspace) if workspace else None
-        catalog = discover_skills(workspace, Path.home())
     except Exception:
         log.exception("Prompt enhancement setup failed — enhancement disabled")
         return
 
     def enhance_prompt(raw_text: str) -> EnhancementResult:
+        try:
+            workspace = resolve_workspace(state.workspace_override, _foreground_window_title())
+            state.workspace_detected_root = str(workspace) if workspace else None
+            catalog = discover_skills(workspace, Path.home())
+        except Exception:
+            log.exception("Skill discovery failed — enhancing without a catalog")
+            catalog = ()
         return enhance_request(
             raw_text,
             enabled=state.enhancement_enabled,

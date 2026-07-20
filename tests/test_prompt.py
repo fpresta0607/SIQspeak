@@ -124,6 +124,21 @@ def test_build_prompt_brief_clamps_bounded_lengths() -> None:
     assert len(brief.requirements[0]) == MAX_TEXT_CHARS
 
 
+def test_build_prompt_brief_strips_control_characters() -> None:
+    # LLM free-text is typed verbatim via SendInput; embedded newlines/control
+    # chars must be stripped so a malicious skill cannot inject Enter keystrokes.
+    payload = _valid_payload()
+    payload["objective"] = "line one\nrm -rf /\ttrailing"
+    payload["requirements"] = ["do\r\nthing"]
+
+    brief = build_prompt_brief(payload, ())
+
+    assert "\n" not in brief.objective
+    assert "\r" not in brief.objective
+    assert "\t" not in brief.objective
+    assert all("\n" not in item and "\r" not in item for item in brief.requirements)
+
+
 def test_build_prompt_brief_drops_blank_list_items() -> None:
     payload = _valid_payload()
     payload["context"] = ["real", "  ", ""]

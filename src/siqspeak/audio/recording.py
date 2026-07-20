@@ -250,7 +250,7 @@ def _transcribe_and_type(
     seg_texts = [seg.text.strip() for seg in segments if seg.text.strip()]
     raw_text = " ".join(seg_texts).strip()
     elapsed = time.perf_counter() - t0
-    log.info("TRANSCRIBE %.3fs -> %s", elapsed, raw_text)
+    log.info("TRANSCRIBE %.3fs -> %d chars", elapsed, len(raw_text))
 
     if raw_text:
         # Optional local prompt enhancement — always lossless (falls back to raw).
@@ -289,11 +289,11 @@ def _transcribe_and_type(
                 type_text(final_text)
             except Exception:
                 log.exception("Failed to type text")
-            log.info("TYPED: %s", final_text)
+            log.info("TYPED %d chars (enhanced=%s)", len(final_text), enhanced)
         elif not target_hwnd:
-            log.info("SKIP TYPE (no valid target window): %s", final_text)
+            log.info("SKIP TYPE (no valid target window): %d chars", len(final_text))
         else:
-            log.info("SKIP TYPE (new recording in progress): %s", final_text)
+            log.info("SKIP TYPE (new recording in progress): %d chars", len(final_text))
 
 
 def transcription_worker_loop(state: AppState) -> None:
@@ -351,7 +351,7 @@ def _stop_and_transcribe_streaming(state: AppState) -> None:
             if len(state.transcription_log) > LOG_IN_MEMORY_CAP:
                 state.transcription_log[:] = state.transcription_log[-LOG_IN_MEMORY_CAP:]
             _save_log_entry(state, entry)
-            log.info("STREAM TYPED: %s", full_text)
+            log.info("STREAM TYPED %d chars", len(full_text))
 
     except Exception:
         log.exception("Streaming flush failed")

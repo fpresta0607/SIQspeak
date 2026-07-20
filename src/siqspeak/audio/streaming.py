@@ -46,7 +46,7 @@ def _transcription_worker(state: AppState) -> None:
             )
             text = " ".join(seg.text.strip() for seg in segments if seg.text.strip()).strip()
             elapsed = time.perf_counter() - t0
-            log.info("STREAM TRANSCRIBE %.3fs -> %s", elapsed, text)
+            log.info("STREAM TRANSCRIBE %.3fs -> %d chars", elapsed, len(text))
 
             if text:
                 state.stream_texts.append(text)
