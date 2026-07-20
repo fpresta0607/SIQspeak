@@ -29,6 +29,24 @@ def test_wm_app_state_is_in_app_range():
 
 
 # ---------------------------------------------------------------------------
+# Enhancing render path
+# ---------------------------------------------------------------------------
+
+def test_render_frame_supports_enhancing():
+    """The active pill renders a distinct enhancing animation without crashing."""
+    from siqspeak.config import ACTIVE_H, ACTIVE_W
+    from siqspeak.overlay.rendering import DOT_COLOR, _render_frame
+
+    assert "enhancing" in DOT_COLOR
+    # Distinct from recording/transcribing colors
+    assert DOT_COLOR["enhancing"] != DOT_COLOR["recording"]
+    assert DOT_COLOR["enhancing"] != DOT_COLOR["transcribing"]
+
+    buf = _render_frame(AppState(), "enhancing", 0.5)
+    assert buf.shape == (ACTIVE_H, ACTIVE_W, 4)
+
+
+# ---------------------------------------------------------------------------
 # AppState new fields
 # ---------------------------------------------------------------------------
 

@@ -3,7 +3,16 @@ from __future__ import annotations
 import queue
 import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from siqspeak.enhancement.prompt import EnhancementResult
+
+
+class EnhancePrompt(Protocol):
+    """Boundary that turns a raw transcript into an enhancement result."""
+
+    def __call__(self, raw_text: str) -> EnhancementResult: ...
 
 
 @dataclass
@@ -113,6 +122,7 @@ class AppState:
     workspace_override: str | None = None
     workspace_detected_root: str | None = None
     skill_catalog: list[dict] = field(default_factory=list)
+    enhance_prompt: EnhancePrompt | None = None  # injected boundary; None disables enhancement
 
     # Tray
     icon: Any = None  # pystray.Icon

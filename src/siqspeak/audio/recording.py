@@ -245,13 +245,27 @@ def _transcribe_and_type(
         suppress_blank=True,
     )
     seg_texts = [seg.text.strip() for seg in segments if seg.text.strip()]
-    text = " ".join(seg_texts).strip()
+    raw_text = " ".join(seg_texts).strip()
     elapsed = time.perf_counter() - t0
-    log.info("TRANSCRIBE %.3fs -> %s", elapsed, text)
+    log.info("TRANSCRIBE %.3fs -> %s", elapsed, raw_text)
 
-    if text:
+    if raw_text:
+        # Optional local prompt enhancement — always lossless (falls back to raw).
+        final_text = raw_text
+        enhanced = False
+        selected_skills: tuple[str, ...] = ()
+        if state.enhancement_enabled and state.enhance_prompt is not None:
+            set_state(state, "enhancing")
+            result = state.enhance_prompt(raw_text)
+            final_text = result.final_text
+            enhanced = result.enhanced
+            selected_skills = result.selected_skills
+
         entry = {
-            "text": text,
+            "text": final_text,
+            "raw_text": raw_text,
+            "enhanced": enhanced,
+            "selected_skills": list(selected_skills),
             "timestamp": time.strftime("%H:%M:%S"),
             "time_epoch": time.time(),
         }
@@ -269,14 +283,14 @@ def _transcribe_and_type(
             except Exception:
                 log.exception("Failed to restore foreground window")
             try:
-                type_text(text)
+                type_text(final_text)
             except Exception:
                 log.exception("Failed to type text")
-            log.info("TYPED: %s", text)
+            log.info("TYPED: %s", final_text)
         elif not target_hwnd:
-            log.info("SKIP TYPE (no valid target window): %s", text)
+            log.info("SKIP TYPE (no valid target window): %s", final_text)
         else:
-            log.info("SKIP TYPE (new recording in progress): %s", text)
+            log.info("SKIP TYPE (new recording in progress): %s", final_text)
 
 
 def transcription_worker_loop(state: AppState) -> None:

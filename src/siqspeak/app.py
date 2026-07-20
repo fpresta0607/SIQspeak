@@ -7,6 +7,7 @@ import logging
 import sys
 import threading
 import time
+from pathlib import Path
 
 from faster_whisper import WhisperModel
 from pystray import Icon, Menu, MenuItem
@@ -31,6 +32,11 @@ from siqspeak.config import (
     WM_TIMER,
     _load_config,
 )
+from siqspeak.enhancement.ollama import OllamaClient
+from siqspeak.enhancement.prompt import EnhancementResult
+from siqspeak.enhancement.service import enhance_request
+from siqspeak.enhancement.skills import discover_skills
+from siqspeak.enhancement.workspace import resolve_workspace
 from siqspeak.hotkey import on_hotkey_down, quit_app
 from siqspeak.interaction.click_handlers import (
     _get_idle_icon_zone,
@@ -377,6 +383,47 @@ def message_loop(state: AppState) -> None:
 
 
 
+def _foreground_window_title() -> str:
+    """Return the current foreground window title (empty when unavailable)."""
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return ""
+    length = user32.GetWindowTextLengthW(hwnd)
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    return buf.value
+
+
+def _install_enhancer(state: AppState) -> None:
+    """Initialize the Ollama client, workspace root, and skill catalog once and
+    expose a typed enhancement boundary on the state.
+
+    The boundary is called from the transcription worker; constructing the client
+    and catalog here keeps ``_transcribe_and_type`` free of I/O setup. Any setup
+    failure leaves ``enhance_prompt`` unset, which safely disables enhancement.
+    """
+    try:
+        client = OllamaClient()
+        workspace = resolve_workspace(state.workspace_override, _foreground_window_title())
+        state.workspace_detected_root = str(workspace) if workspace else None
+        catalog = discover_skills(workspace, Path.home())
+    except Exception:
+        log.exception("Prompt enhancement setup failed — enhancement disabled")
+        return
+
+    def enhance_prompt(raw_text: str) -> EnhancementResult:
+        return enhance_request(
+            raw_text,
+            enabled=state.enhancement_enabled,
+            model=state.enhancement_model,
+            client=client,
+            catalog=catalog,
+        )
+
+    state.enhance_prompt = enhance_prompt
+
+
 def main() -> None:
     """Application entry point."""
     # Single-instance guard: prevent multiple copies running at the same time.
@@ -408,6 +455,9 @@ def main() -> None:
     state.enhancement_enabled = cfg.get("enhancement_enabled", False)
     state.enhancement_model = cfg.get("enhancement_model", ENHANCEMENT_MODEL)
     state.workspace_override = cfg.get("workspace_override")
+
+    # Wire the optional local prompt-enhancement boundary once at startup
+    _install_enhancer(state)
 
     # Load persisted transcription log
     _load_log(state)

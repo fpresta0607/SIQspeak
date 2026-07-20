@@ -38,3 +38,27 @@ def test_transcription_log_keeps_raw_whisper_text(monkeypatch) -> None:
     assert state.model.kwargs["beam_size"] == 1
     assert state.model.kwargs["without_timestamps"] is True
     assert state.model.kwargs["condition_on_previous_text"] is False
+
+
+def test_enhancer_not_called_when_toggle_off(monkeypatch) -> None:
+    raw_text = "please refactor the parser"
+    state = AppState()
+    state.model = _FakeModel(raw_text)
+    state.enhancement_enabled = False
+    called = False
+
+    def _spy(_raw: str):
+        nonlocal called
+        called = True
+        raise AssertionError("enhancer must not run when toggle is off")
+
+    state.enhance_prompt = _spy
+    monkeypatch.setattr(recording, "_save_log_entry", lambda _state, _entry: None)
+
+    recording._transcribe_and_type(state, np.zeros(16000, dtype=np.float32), target_hwnd=None)
+
+    assert called is False
+    entry = state.transcription_log[-1]
+    assert entry["text"] == raw_text
+    assert entry["raw_text"] == raw_text
+    assert entry["enhanced"] is False
