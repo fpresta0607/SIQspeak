@@ -380,9 +380,11 @@ def _install_enhancer(state: AppState) -> None:
         log.exception("Prompt enhancement setup failed — enhancement disabled")
         return
 
-    def enhance_prompt(raw_text: str, window_title: str) -> EnhancementResult:
+    def enhance_prompt(
+        raw_text: str, window_title: str, window_hwnd: int | None
+    ) -> EnhancementResult:
         try:
-            workspace = resolve_workspace(state.workspace_override, window_title)
+            workspace = resolve_workspace(state.workspace_override, window_title, window_hwnd)
             state.workspace_detected_root = str(workspace) if workspace else None
             catalog = discover_skills(workspace, Path.home())
             context = load_workspace_context(workspace, Path.home())

@@ -133,7 +133,7 @@ Settings persist to `config.json` (gitignored). Transcription runs CPU-only with
 - **Raw vs. enhanced:** With the toggle off, the raw Whisper transcript is typed immediately. With it on, the overlay shows an `enhancing` state, a local model rewrites the transcript, then the structured prompt is typed. Enhancement adds latency; it is not instantaneous.
 - **Local-only boundary:** `ollama.py` talks to `http://127.0.0.1:11434` only — no configurable remote endpoint. Transcript and prompt text never leave the machine. The debug log (`dictate.log`) records only lengths/status, never content; the visible history is persisted to `transcriptions.jsonl` for the log panel.
 - **Agent Skill selection without execution:** `skills.py` parses only bounded YAML frontmatter (≤64 KiB reads, name-validated, description-capped) from workspace/user skill dirs to suggest skill names. Skill bodies are never opened or executed; names/descriptions are untrusted catalog data. `disable-model-invocation: true` skills are excluded from automatic candidates but honored when named explicitly.
-- **Workspace override:** `workspace.py` resolves a trusted root from the manual override (wins) or by parsing an absolute path out of the title of the window the user dictated into (captured at record start, not the live foreground) and ascending to a Git root. It never scans drives or guesses.
+- **Workspace override:** `workspace.py` resolves a trusted root in precedence order: the manual override (wins); the focused terminal's shell working directory (`terminal.py` maps the dictated window's HWND → PID via `psutil`, identifies a shell or terminal-host descendant, reads its CWD — best-effort, never raises/blocks/logs the path); then an absolute path parsed out of the dictated window's title (captured at record start, not the live foreground). Each non-override signal ascends to a Git root. It never scans drives or guesses.
 - **Raw fallback:** Disabled toggle, unavailable Ollama, missing model, or a malformed response all fall back to typing the preserved raw transcript. Enhancement is lossless.
 
 Requires [Ollama for Windows](https://ollama.com/download); `setup.bat` optionally pulls `qwen3.5:2b` (~2.7 GB). Enhancement package coverage: `pytest tests/test_skills.py tests/test_ollama.py tests/test_prompt.py tests/test_enhancement_service.py --cov=siqspeak.enhancement`.
@@ -142,7 +142,7 @@ Requires [Ollama for Windows](https://ollama.com/download); `setup.bat` optional
 
 Canonical source: `pyproject.toml`. Legacy `requirements.txt` kept for backward compat.
 
-Runtime: `faster-whisper`, `sounddevice`, `numpy`, `pystray`, `pillow`, `pyperclip`
+Runtime: `faster-whisper`, `sounddevice`, `numpy`, `pystray`, `pillow`, `pyperclip`, `pyyaml`, `psutil`
 Dev: `ruff`, `pyright`, `pytest`, `pytest-cov`
 
 ## Logging
