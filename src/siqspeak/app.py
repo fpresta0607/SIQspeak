@@ -53,6 +53,10 @@ from siqspeak.logging_setup import configure_logging
 from siqspeak.overlay.panels import _hide_all_panels, _update_panel_content
 from siqspeak.overlay.panels.log_panel import _render_log_panel, _show_log_panel
 from siqspeak.overlay.panels.model_panel import _render_model_panel
+from siqspeak.overlay.panels.settings_panel import (
+    _render_settings_panel,
+    _settings_render_signature,
+)
 from siqspeak.overlay.panels.welcome import _hide_welcome, _show_welcome
 from siqspeak.overlay.pill import _set_pill_mode
 from siqspeak.overlay.rendering import _build_idle_frame, _render_frame
@@ -169,6 +173,8 @@ def message_loop(state: AppState) -> None:
     phase = 0.0
     current_state = "idle"
     topmost_tick = 0
+    settings_sig: tuple | None = None
+    settings_h = 0
     was_model_loading = False
 
     msg = ctypes.wintypes.MSG()
@@ -316,6 +322,19 @@ def message_loop(state: AppState) -> None:
                                 _show_panel_window(state, state.model_panel_hwnd, buf2, pw2, ph2)
                 elif state.active_panel == "settings":
                     _handle_settings_click(state)
+                    # Re-render only when settings state changes (e.g. a click or
+                    # background pull progress) — never on plain pointer movement.
+                    sig = _settings_render_signature(state)
+                    if sig != settings_sig:
+                        settings_sig = sig
+                        buf, pw, ph = _render_settings_panel(state)
+                        if ph != settings_h:
+                            # Height changed (mic expand/collapse) — re-anchor.
+                            settings_h = ph
+                            from siqspeak.overlay.panels import _show_panel_window
+                            _show_panel_window(state, state.settings_panel_hwnd, buf, pw, ph)
+                        else:
+                            _update_panel_content(state.settings_panel_hwnd, buf, pw, ph)
 
                 # Mouse wheel scroll for log panel
                 if state.wheel_delta != 0:

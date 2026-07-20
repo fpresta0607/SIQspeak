@@ -8,17 +8,28 @@ from siqspeak.config import (
     _DRAG_THRESHOLD,
     _ZONE_PANEL,
     AVAILABLE_MODELS,
+    ENHANCEMENT_MODELS,
     IDLE_H,
     IDLE_ICON_ZONE_W,
     IDLE_W,
     MODEL_PANEL_HEADER_H,
     MODEL_PANEL_ROW_H,
-    SETTINGS_HEADER_H,
     save_state_config,
 )
 from siqspeak.interaction.hover import _is_cursor_over_hwnd
+from siqspeak.overlay.panels.settings_panel import (
+    MIC_ROW_H,
+    SETTINGS_ROW_H,
+    SettingsAction,
+    _open_ollama_download,
+    _refresh_enhancer_status,
+    _settings_layout,
+    _start_model_pull,
+    settings_action_at_y,
+)
 from siqspeak.overlay.pill import _pill_screen_rect
 from siqspeak.state import AppState
+from siqspeak.win32.folder_dialog import select_folder
 
 log = logging.getLogger("siqspeak")
 
@@ -316,11 +327,63 @@ def _handle_hf_auth_click(state: AppState) -> None:
         return
 
 
-def _handle_settings_click(state: AppState) -> None:
-    """Detect click on mic dropdown or Quit."""
-    from siqspeak.overlay.panels import _show_panel_window
-    from siqspeak.overlay.panels.settings_panel import MIC_ROW_H, _render_settings_panel
+def _apply_enhancement_toggle(state: AppState) -> None:
+    """Flip the prompt-enhancement toggle and persist immediately."""
+    state.enhancement_enabled = not state.enhancement_enabled
+    save_state_config(state)
 
+
+def _cycle_enhancer_model(state: AppState) -> None:
+    """Advance to the next approved enhancer model and persist."""
+    try:
+        idx = ENHANCEMENT_MODELS.index(state.enhancement_model)
+    except ValueError:
+        idx = -1
+    state.enhancement_model = ENHANCEMENT_MODELS[(idx + 1) % len(ENHANCEMENT_MODELS)]
+    save_state_config(state)
+
+
+def _apply_workspace_selection(state: AppState, folder: str | None) -> bool:
+    """Persist a chosen workspace folder; return whether it changed."""
+    if not folder:
+        return False
+    state.workspace_override = folder
+    save_state_config(state)
+    return True
+
+
+def _install_model_action(state: AppState) -> None:
+    """Act on the enhancer status row: open Ollama download or start a pull."""
+    if state.enhancement_status == "ollama_missing":
+        _open_ollama_download()
+    elif state.enhancement_status in ("model_missing", "error", None):
+        _start_model_pull(state)
+    # "ready" / "pulling": nothing actionable.
+
+
+def _handle_mic_click(state: AppState, ry: int) -> None:
+    """Toggle the mic dropdown or select a device within the mic band."""
+    mic_row = _settings_layout(state)[0]
+    header_bottom = mic_row.y + SETTINGS_ROW_H
+    if ry < header_bottom:
+        state.mic_expanded = not state.mic_expanded
+        return
+    if state.mic_expanded and state.mic_devices:
+        dev_idx = (ry - header_bottom) // MIC_ROW_H
+        if 0 <= dev_idx < len(state.mic_devices):
+            dev = state.mic_devices[dev_idx]
+            state.mic_device = dev["index"]
+            state.mic_expanded = False
+            log.info("Mic changed to device %d: %s", dev["index"], dev["name"])
+            save_state_config(state)
+
+
+def _handle_settings_click(state: AppState) -> None:
+    """Route a click within the settings panel to its action.
+
+    State is only mutated here; the message loop re-renders when the settings
+    signature changes, so pointer movement never drives a redraw.
+    """
     user32 = ctypes.windll.user32
 
     if not (user32.GetAsyncKeyState(0x01) & 0x8000):
@@ -335,52 +398,29 @@ def _handle_settings_click(state: AppState) -> None:
 
     state.settings_click_debounce = True
 
-    # Get click position relative to panel
     pt = ctypes.wintypes.POINT()
     user32.GetCursorPos(ctypes.byref(pt))
     rect = ctypes.wintypes.RECT()
     user32.GetWindowRect(state.settings_panel_hwnd, ctypes.byref(rect))
     ry = pt.y - rect.top
 
-    row_h = 44
-    row_start = SETTINGS_HEADER_H + 8
-
-    if ry < SETTINGS_HEADER_H:
+    action = settings_action_at_y(state, ry)
+    if action is None:
         return
-
-    def _rerender() -> None:
-        buf, pw, ph = _render_settings_panel(state)
-        _show_panel_window(state, state.settings_panel_hwnd, buf, pw, ph)
-
-    # Calculate zone boundaries
-    mic_top = row_start
-    mic_bottom = mic_top + row_h
-
-    # Mic dropdown items (below mic header row when expanded)
-    mic_list_top = mic_bottom
-    if state.mic_expanded and state.mic_devices:
-        mic_list_bottom = mic_list_top + len(state.mic_devices) * MIC_ROW_H + 8
-    else:
-        mic_list_bottom = mic_list_top
-
-    quit_top = mic_list_bottom + 12
-
-    # --- Mic header row: toggle dropdown ---
-    if mic_top <= ry < mic_bottom:
-        state.mic_expanded = not state.mic_expanded
-        _rerender()
-    # --- Mic device list item ---
-    elif state.mic_expanded and mic_list_top <= ry < mic_list_bottom:
-        dev_idx = (ry - mic_list_top) // MIC_ROW_H
-        if 0 <= dev_idx < len(state.mic_devices):
-            dev = state.mic_devices[dev_idx]
-            state.mic_device = dev["index"]
-            state.mic_expanded = False
-            log.info("Mic changed to device %d: %s", dev["index"], dev["name"])
-            save_state_config(state)
-            _rerender()
-    # --- Quit button ---
-    elif ry >= quit_top:
+    if action == SettingsAction.MICROPHONE:
+        _handle_mic_click(state, ry)
+    elif action == SettingsAction.ENHANCEMENT_TOGGLE:
+        _apply_enhancement_toggle(state)
+    elif action == SettingsAction.WORKSPACE:
+        folder = select_folder(hwnd=state.settings_panel_hwnd or 0)
+        if _apply_workspace_selection(state, folder):
+            _refresh_enhancer_status(state)
+    elif action == SettingsAction.ENHANCER_MODEL:
+        _cycle_enhancer_model(state)
+        _refresh_enhancer_status(state)
+    elif action == SettingsAction.INSTALL_MODEL:
+        _install_model_action(state)
+    elif action == SettingsAction.QUIT:
         state.should_quit = True
         if state.icon:
             state.icon.stop()
