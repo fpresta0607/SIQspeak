@@ -140,10 +140,7 @@ def _handle_idle_pill_click(state: AppState) -> None:
 
 
 def _handle_model_click(state: AppState) -> None:
-    """Detect click on a model row -- two-click confirmation for uncached models.
-
-    Also handles clicks on the HuggingFace auth dialog when ``state.needs_hf_auth``.
-    """
+    """Detect click on a model row -- two-click confirmation for uncached models."""
     from siqspeak.model.manager import (
         _is_model_cached,
         _start_model_download_and_load,
@@ -169,11 +166,6 @@ def _handle_model_click(state: AppState) -> None:
 
     state.model_click_debounce = True
 
-    # --- HuggingFace auth dialog ---
-    if state.needs_hf_auth and not state.hf_auth_success:
-        _handle_hf_auth_click(state)
-        return
-
     pt = ctypes.wintypes.POINT()
     user32.GetCursorPos(ctypes.byref(pt))
     rect = ctypes.wintypes.RECT()
@@ -198,133 +190,6 @@ def _handle_model_click(state: AppState) -> None:
             # First click on uncached model: show confirmation
             state.download_confirm_name = name
             _show_model_panel(state)
-
-
-def _handle_hf_auth_click(state: AppState) -> None:
-    """Handle clicks within the HuggingFace auth dialog."""
-    import threading
-    import time
-
-    from siqspeak.hf_auth import open_token_page, save_token, validate_token
-    from siqspeak.model.manager import _retry_download_after_auth
-    from siqspeak.overlay.panels.model_panel import AUTH_BTN_Y, AUTH_BUTTONS, _show_model_panel
-
-    user32 = ctypes.windll.user32
-
-    pt = ctypes.wintypes.POINT()
-    user32.GetCursorPos(ctypes.byref(pt))
-    rect = ctypes.wintypes.RECT()
-    user32.GetWindowRect(state.model_panel_hwnd, ctypes.byref(rect))
-
-    rx = pt.x - rect.left
-    ry = pt.y - rect.top
-
-    btn_y = AUTH_BTN_Y
-    if ry < btn_y or ry > btn_y + 32:
-        return
-
-    # Determine which button was clicked
-    clicked = None
-    for i, btn in enumerate(AUTH_BUTTONS):
-        if btn["x1"] <= rx <= btn["x2"]:
-            clicked = i
-            break
-
-    if clicked is None:
-        return
-
-    # --- Button 0: Open Browser ---
-    if clicked == 0:
-        log.info("HF auth: opening browser")
-        open_token_page()
-        return
-
-    # --- Button 1: Paste & Verify ---
-    if clicked == 1:
-        log.info("HF auth: paste & verify")
-        # Read token from clipboard
-        token = ""
-        try:
-            import pyperclip
-            token = pyperclip.paste().strip()
-        except Exception:
-            pass
-
-        if not token:
-            # Fallback: Win32 clipboard
-            try:
-                kernel32 = ctypes.windll.kernel32
-                user32_lib = ctypes.windll.user32
-                user32_lib.OpenClipboard(0)
-                # Try CF_UNICODETEXT first (13), then CF_TEXT (1)
-                handle = user32_lib.GetClipboardData(13)
-                if handle:
-                    kernel32.GlobalLock.restype = ctypes.c_wchar_p
-                    ptr = kernel32.GlobalLock(handle)
-                    if ptr:
-                        token = str(ptr).strip()
-                    kernel32.GlobalUnlock(handle)
-                if not token:
-                    handle = user32_lib.GetClipboardData(1)
-                    if handle:
-                        token = ctypes.c_char_p(handle).value.decode("utf-8", errors="ignore").strip()
-                user32_lib.CloseClipboard()
-            except Exception as e:
-                log.warning("Clipboard read failed: %s", e)
-
-        if not token:
-            state.hf_auth_error = "Clipboard is empty - copy your token first"
-            state.hf_auth_error_time = time.time()
-            _show_model_panel(state)
-            return
-
-        if not token.startswith("hf_"):
-            state.hf_auth_error = "Token should start with hf_ - check and copy again"
-            state.hf_auth_error_time = time.time()
-            _show_model_panel(state)
-            return
-
-        # Verify in background thread
-        state.hf_auth_verifying = True
-        _show_model_panel(state)
-
-        def _verify():
-            username = validate_token(token)
-            if username:
-                if save_token(token):
-                    state.hf_username = username
-                    state.hf_auth_verifying = False
-                    state.hf_auth_success = True
-                    state.hf_auth_success_time = time.time()
-                    state.hf_auth_error = None
-                    _show_model_panel(state)
-                    # Auto-dismiss after 1.5s and start download
-                    time.sleep(1.5)
-                    state.hf_auth_success = False
-                    state.needs_hf_auth = False
-                    _retry_download_after_auth(state)
-                else:
-                    state.hf_auth_verifying = False
-                    state.hf_auth_error = "Token valid but failed to save"
-                    state.hf_auth_error_time = time.time()
-                    _show_model_panel(state)
-            else:
-                state.hf_auth_verifying = False
-                state.hf_auth_error = "Invalid token - check and try again"
-                state.hf_auth_error_time = time.time()
-                _show_model_panel(state)
-
-        threading.Thread(target=_verify, daemon=True).start()
-        return
-
-    # --- Button 2: Cancel ---
-    if clicked == 2:
-        log.info("HF auth: cancelled")
-        state.needs_hf_auth = False
-        state.hf_pending_model = None
-        state.hf_auth_error = None
-        _show_model_panel(state)
-        return
 
 
 def _apply_enhancement_toggle(state: AppState) -> None:
