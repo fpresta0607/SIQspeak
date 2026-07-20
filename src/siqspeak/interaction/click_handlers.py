@@ -8,7 +8,7 @@ from siqspeak.config import (
     _DRAG_THRESHOLD,
     _ZONE_PANEL,
     AVAILABLE_MODELS,
-    ENHANCEMENT_MODELS,
+    ENHANCEMENT_MODEL_MIN_GB,
     IDLE_H,
     IDLE_ICON_ZONE_W,
     IDLE_W,
@@ -16,6 +16,7 @@ from siqspeak.config import (
     MODEL_PANEL_ROW_H,
     save_state_config,
 )
+from siqspeak.enhancement.hardware import can_run_model
 from siqspeak.interaction.hover import _is_cursor_over_hwnd
 from siqspeak.overlay.panels.settings_panel import (
     MIC_ROW_H,
@@ -198,16 +199,6 @@ def _apply_enhancement_toggle(state: AppState) -> None:
     save_state_config(state)
 
 
-def _cycle_enhancer_model(state: AppState) -> None:
-    """Advance to the next approved enhancer model and persist."""
-    try:
-        idx = ENHANCEMENT_MODELS.index(state.enhancement_model)
-    except ValueError:
-        idx = -1
-    state.enhancement_model = ENHANCEMENT_MODELS[(idx + 1) % len(ENHANCEMENT_MODELS)]
-    save_state_config(state)
-
-
 def _apply_workspace_selection(state: AppState, folder: str | None) -> bool:
     """Persist a chosen workspace folder; return whether it changed."""
     if not folder:
@@ -218,10 +209,21 @@ def _apply_workspace_selection(state: AppState, folder: str | None) -> bool:
 
 
 def _install_model_action(state: AppState) -> None:
-    """Act on the enhancer status row: open Ollama download or start a pull."""
+    """Act on the enhancer status row: open Ollama download or start a pull.
+
+    A model that the machine cannot run is never downloaded — the pull is refused
+    with a clear message instead of wasting ~2.7 GB on an unusable model.
+    """
     if state.enhancement_status == "ollama_missing":
         _open_ollama_download()
     elif state.enhancement_status in ("model_missing", "error", None):
+        ok, readout = can_run_model(ENHANCEMENT_MODEL_MIN_GB)
+        if not ok:
+            state.enhancement_status = "error"
+            state.enhancement_error = (
+                f"Needs ~{ENHANCEMENT_MODEL_MIN_GB:.0f} GB, you have {readout}"
+            )
+            return
         _start_model_pull(state)
     # "ready" / "pulling": nothing actionable.
 
@@ -280,9 +282,6 @@ def _handle_settings_click(state: AppState) -> None:
         folder = select_folder(hwnd=state.settings_panel_hwnd or 0)
         if _apply_workspace_selection(state, folder):
             _refresh_enhancer_status(state)
-    elif action == SettingsAction.ENHANCER_MODEL:
-        _cycle_enhancer_model(state)
-        _refresh_enhancer_status(state)
     elif action == SettingsAction.INSTALL_MODEL:
         _install_model_action(state)
     elif action == SettingsAction.QUIT:

@@ -31,6 +31,8 @@ def _instrument(monkeypatch) -> list[tuple]:
     monkeypatch.setattr(recording, "focus_window", lambda hwnd: events.append(("focus", hwnd)))
     monkeypatch.setattr(recording, "type_text", lambda text: events.append(("type", text)))
     monkeypatch.setattr(recording.time, "sleep", lambda *_a, **_k: None)
+    # Resolve the target window's title deterministically from its handle.
+    monkeypatch.setattr(recording, "window_title", lambda hwnd: f"title#{hwnd}")
     return events
 
 
@@ -39,7 +41,9 @@ def test_enhancing_state_precedes_typing(monkeypatch) -> None:
     state = AppState()
     state.model = _FakeModel("raw words")
     state.enhancement_enabled = True
-    state.enhance_prompt = lambda raw: EnhancementResult(raw, "FINAL " + raw, ("systematic-debugging",), True)
+    state.enhance_prompt = lambda raw, title: EnhancementResult(
+        raw, "FINAL " + raw, ("systematic-debugging",), True,
+    )
 
     recording._transcribe_and_type(state, np.zeros(16000, dtype=np.float32), target_hwnd=123)
 
@@ -53,7 +57,9 @@ def test_successful_enhancement_types_final_text(monkeypatch) -> None:
     state = AppState()
     state.model = _FakeModel("raw words")
     state.enhancement_enabled = True
-    state.enhance_prompt = lambda raw: EnhancementResult(raw, "FINAL " + raw, ("systematic-debugging",), True)
+    state.enhance_prompt = lambda raw, title: EnhancementResult(
+        raw, "FINAL " + raw, ("systematic-debugging",), True,
+    )
 
     recording._transcribe_and_type(state, np.zeros(16000, dtype=np.float32), target_hwnd=123)
 
@@ -64,12 +70,31 @@ def test_successful_enhancement_types_final_text(monkeypatch) -> None:
     assert entry["enhanced"] is True
 
 
+def test_enhancer_receives_target_window_title(monkeypatch) -> None:
+    _instrument(monkeypatch)
+    seen: list[str] = []
+    state = AppState()
+    state.model = _FakeModel("raw words")
+    state.enhancement_enabled = True
+
+    def _enhance(raw: str, title: str) -> EnhancementResult:
+        seen.append(title)
+        return EnhancementResult(raw, "FINAL", (), True)
+
+    state.enhance_prompt = _enhance
+
+    recording._transcribe_and_type(state, np.zeros(16000, dtype=np.float32), target_hwnd=456)
+
+    # The window the user dictated into (target_hwnd), not the live foreground.
+    assert seen == ["title#456"]
+
+
 def test_failed_enhancement_types_raw_text(monkeypatch) -> None:
     events = _instrument(monkeypatch)
     state = AppState()
     state.model = _FakeModel("raw words")
     state.enhancement_enabled = True
-    state.enhance_prompt = lambda raw: EnhancementResult(raw, raw, (), False, "enhancement_failed")
+    state.enhance_prompt = lambda raw, title: EnhancementResult(raw, raw, (), False, "enhancement_failed")
 
     recording._transcribe_and_type(state, np.zeros(16000, dtype=np.float32), target_hwnd=55)
 
@@ -85,7 +110,7 @@ def test_focus_restoration_uses_original_target(monkeypatch) -> None:
     state = AppState()
     state.model = _FakeModel("raw words")
     state.enhancement_enabled = True
-    state.enhance_prompt = lambda raw: EnhancementResult(raw, "FINAL", (), True)
+    state.enhance_prompt = lambda raw, title: EnhancementResult(raw, "FINAL", (), True)
 
     recording._transcribe_and_type(state, np.zeros(16000, dtype=np.float32), target_hwnd=999)
 
@@ -98,7 +123,7 @@ def test_new_recording_suppresses_typing(monkeypatch) -> None:
     state.model = _FakeModel("raw words")
     state.enhancement_enabled = True
     state.is_recording = True  # a new recording started while we transcribed
-    state.enhance_prompt = lambda raw: EnhancementResult(raw, "FINAL", (), True)
+    state.enhance_prompt = lambda raw, title: EnhancementResult(raw, "FINAL", (), True)
 
     recording._transcribe_and_type(state, np.zeros(16000, dtype=np.float32), target_hwnd=77)
 

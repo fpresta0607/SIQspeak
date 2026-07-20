@@ -10,6 +10,17 @@ from siqspeak.state import AppState
 from siqspeak.win32.structs import BITMAPINFOHEADER, BLENDFUNCTION, SIZEL
 
 
+def window_title(hwnd: int | None) -> str:
+    """Return a window's title text, or "" when the handle is falsey."""
+    if not hwnd:
+        return ""
+    user32 = ctypes.windll.user32
+    length = user32.GetWindowTextLengthW(hwnd)
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    return buf.value
+
+
 def _update_layered_window(hwnd: int, buf: np.ndarray, w: int, h: int) -> None:
     """Blit BGRA buffer to a layered window via UpdateLayeredWindow."""
     if not hwnd:

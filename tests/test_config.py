@@ -36,12 +36,13 @@ def test_save_state_config_persists_enhancement_settings(
     monkeypatch.setattr("siqspeak.config.CONFIG_PATH", str(tmp_path / "config.json"))
     state = AppState()
     state.enhancement_enabled = True
-    state.enhancement_model = "qwen3.5:4b"
     state.workspace_override = r"C:\dev\project"
 
     save_state_config(state)
 
-    assert _load_config()["enhancement_model"] == "qwen3.5:4b"
+    assert _load_config()["enhancement_model"] == "qwen3.5:2b"
+    assert _load_config()["enhancement_enabled"] is True
+    assert _load_config()["workspace_override"] == r"C:\dev\project"
 
 
 def test_load_config_missing_file(tmp_path, monkeypatch):

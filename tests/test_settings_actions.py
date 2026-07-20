@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import pytest
 
-from siqspeak.config import ENHANCEMENT_MODELS, _load_config
+from siqspeak.config import _load_config
 from siqspeak.interaction import click_handlers
 from siqspeak.interaction.click_handlers import (
     _apply_enhancement_toggle,
     _apply_workspace_selection,
-    _cycle_enhancer_model,
     _install_model_action,
 )
 from siqspeak.state import AppState
@@ -37,28 +36,6 @@ def test_toggle_enhancement_flips_and_persists(_cfg) -> None:
 
     _apply_enhancement_toggle(state)
     assert state.enhancement_enabled is False
-
-
-def test_cycle_enhancer_model_visits_only_approved_models(_cfg) -> None:
-    state = AppState()
-    state.enhancement_model = ENHANCEMENT_MODELS[0]
-
-    _cycle_enhancer_model(state)
-    assert state.enhancement_model == ENHANCEMENT_MODELS[1]
-
-    _cycle_enhancer_model(state)
-    assert state.enhancement_model == ENHANCEMENT_MODELS[0]
-
-    assert _load_config()["enhancement_model"] in ENHANCEMENT_MODELS
-
-
-def test_cycle_from_unknown_model_falls_back_to_first(_cfg) -> None:
-    state = AppState()
-    state.enhancement_model = "not-a-real-model"
-
-    _cycle_enhancer_model(state)
-
-    assert state.enhancement_model == ENHANCEMENT_MODELS[0]
 
 
 def test_workspace_selection_persists_valid_folder(_cfg) -> None:
@@ -99,10 +76,26 @@ def test_install_action_starts_pull_when_model_missing(monkeypatch) -> None:
     events: list[object] = []
     monkeypatch.setattr(click_handlers, "_start_model_pull", lambda s: events.append(s))
     monkeypatch.setattr(click_handlers, "_open_ollama_download", lambda: events.append("open"))
+    monkeypatch.setattr(click_handlers, "can_run_model", lambda _min_gb: (True, "31.7 GB RAM, 8.0 GB GPU"))
 
     _install_model_action(state)
 
     assert events == [state]
+
+
+def test_install_action_blocks_pull_when_hardware_insufficient(monkeypatch) -> None:
+    state = AppState()
+    state.enhancement_status = "model_missing"
+    events: list[object] = []
+    monkeypatch.setattr(click_handlers, "_start_model_pull", lambda s: events.append("pull"))
+    monkeypatch.setattr(click_handlers, "can_run_model", lambda _min_gb: (False, "2.0 GB RAM"))
+
+    _install_model_action(state)
+
+    assert events == []
+    assert state.enhancement_status == "error"
+    assert state.enhancement_error is not None
+    assert "2.0 GB RAM" in state.enhancement_error
 
 
 def test_install_action_is_noop_when_ready(monkeypatch) -> None:
