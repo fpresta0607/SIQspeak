@@ -1,8 +1,47 @@
 """Tests for config load/save."""
 from __future__ import annotations
 
-from siqspeak.config import _load_config, save_config, save_state_config
+from pathlib import Path
+
+import pytest
+
+from siqspeak.config import (
+    MODEL_NAME,
+    SPEECH_MODELS,
+    _load_config,
+    save_config,
+    save_state_config,
+)
 from siqspeak.state import AppState
+
+
+def test_new_install_defaults_to_base_english() -> None:
+    assert MODEL_NAME == "base.en"
+
+
+def test_speech_model_catalog_is_curated() -> None:
+    assert [item["name"] for item in SPEECH_MODELS] == [
+        "tiny.en",
+        "base.en",
+        "small.en",
+        "distil-medium.en",
+        "distil-large-v3.5",
+    ]
+    assert SPEECH_MODELS[1]["tier"] == "Default"
+
+
+def test_save_state_config_persists_enhancement_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("siqspeak.config.CONFIG_PATH", str(tmp_path / "config.json"))
+    state = AppState()
+    state.enhancement_enabled = True
+    state.enhancement_model = "qwen3.5:4b"
+    state.workspace_override = r"C:\dev\project"
+
+    save_state_config(state)
+
+    assert _load_config()["enhancement_model"] == "qwen3.5:4b"
 
 
 def test_load_config_missing_file(tmp_path, monkeypatch):
@@ -53,4 +92,7 @@ def test_save_state_config_does_not_persist_device(tmp_path, monkeypatch):
         "pill_x": 100,
         "pill_y": 200,
         "mic_device": 3,
+        "enhancement_enabled": False,
+        "enhancement_model": "qwen3.5:2b",
+        "workspace_override": None,
     }

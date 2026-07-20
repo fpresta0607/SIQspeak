@@ -18,7 +18,7 @@ def test_state_code_roundtrip():
 
 
 def test_state_code_covers_all_states():
-    expected = {"idle", "recording", "transcribing"}
+    expected = {"idle", "recording", "transcribing", "enhancing"}
     assert set(STATE_CODE.keys()) == expected
     assert set(STATE_NAME.values()) == expected
 

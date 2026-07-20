@@ -47,8 +47,12 @@ LOG_FILE_PATH = os.path.join(SCRIPT_DIR, "transcriptions.jsonl")
 # ---------------------------------------------------------------------------
 # Model / transcription config
 # ---------------------------------------------------------------------------
-MODEL_NAME = "tiny"
+MODEL_NAME = "base.en"
 SAMPLE_RATE = 16000
+
+# Local prompt enhancement (optional, opt-in)
+ENHANCEMENT_MODEL = "qwen3.5:2b"
+ENHANCEMENT_MODELS = ("qwen3.5:2b", "qwen3.5:4b")
 
 # Streaming transcription (type-as-you-talk)
 STREAM_MODE = False                 # opt-in; toggled via settings panel
@@ -135,11 +139,15 @@ LOG_FILE_MAX_ENTRIES = 500
 # Model selector panel
 MODEL_PANEL_ROW_H = 62
 MODEL_PANEL_HEADER_H = 52
-AVAILABLE_MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
-MODEL_SIZES_MB = {
-    "tiny": 75, "base": 141, "small": 464,
-    "medium": 1460, "large-v2": 2947, "large-v3": 2948,
-}
+SPEECH_MODELS = (
+    {"name": "tiny.en", "tier": "Fastest", "size_mb": 75},
+    {"name": "base.en", "tier": "Default", "size_mb": 141},
+    {"name": "small.en", "tier": "Balanced", "size_mb": 464},
+    {"name": "distil-medium.en", "tier": "High Quality", "size_mb": 755},
+    {"name": "distil-large-v3.5", "tier": "Best Quality", "size_mb": 1446},
+)
+AVAILABLE_MODELS = tuple(model["name"] for model in SPEECH_MODELS)
+MODEL_SIZES_MB = {model["name"]: model["size_mb"] for model in SPEECH_MODELS}
 
 # Settings panel
 SETTINGS_HEADER_H = 52
@@ -171,8 +179,8 @@ WM_TIMER = 0x0113
 WM_APP_STATE = 0x8002  # custom message for overlay state transitions
 
 # State codes for WM_APP_STATE wParam (PostThreadMessageW)
-STATE_CODE: dict[str, int] = {"idle": 0, "recording": 1, "transcribing": 2}
-STATE_NAME: dict[int, str] = {0: "idle", 1: "recording", 2: "transcribing"}
+STATE_CODE: dict[str, int] = {"idle": 0, "recording": 1, "transcribing": 2, "enhancing": 3}
+STATE_NAME: dict[int, str] = {0: "idle", 1: "recording", 2: "transcribing", 3: "enhancing"}
 
 
 # ---------------------------------------------------------------------------
@@ -231,4 +239,7 @@ def save_state_config(state: AppState) -> None:
         "pill_x": state.pill_user_x,
         "pill_y": state.pill_user_y,
         "mic_device": state.mic_device,
+        "enhancement_enabled": state.enhancement_enabled,
+        "enhancement_model": state.enhancement_model,
+        "workspace_override": state.workspace_override,
     })

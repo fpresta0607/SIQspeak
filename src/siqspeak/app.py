@@ -18,6 +18,7 @@ from siqspeak.config import (
     ACTIVE_H,
     ACTIVE_W,
     AVAILABLE_MODELS,
+    ENHANCEMENT_MODEL,
     IDLE_H,
     IDLE_W,
     LOG_PANEL_MAX_VISIBLE,
@@ -404,6 +405,9 @@ def main() -> None:
     state.pill_user_x = cfg.get("pill_x")
     state.pill_user_y = cfg.get("pill_y")
     state.mic_device = cfg.get("mic_device")
+    state.enhancement_enabled = cfg.get("enhancement_enabled", False)
+    state.enhancement_model = cfg.get("enhancement_model", ENHANCEMENT_MODEL)
+    state.workspace_override = cfg.get("workspace_override")
 
     # Load persisted transcription log
     _load_log(state)

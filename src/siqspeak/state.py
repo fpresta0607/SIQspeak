@@ -104,6 +104,16 @@ class AppState:
     stream_focus_done: bool = False
     stream_texts: list[str] = field(default_factory=list)
 
+    # Local prompt enhancement
+    enhancement_enabled: bool = False
+    enhancement_model: str = "qwen3.5:2b"
+    enhancement_status: str | None = None
+    enhancement_error: str | None = None
+    enhancement_pull_progress: float = 0.0
+    workspace_override: str | None = None
+    workspace_detected_root: str | None = None
+    skill_catalog: list[dict] = field(default_factory=list)
+
     # Tray
     icon: Any = None  # pystray.Icon
 
