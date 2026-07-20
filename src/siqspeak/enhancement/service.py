@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
+from siqspeak.enhancement.context import ContextSource
 from siqspeak.enhancement.prompt import (
     PROMPT_SCHEMA,
     SYSTEM_MESSAGE,
@@ -27,6 +28,10 @@ logger = logging.getLogger(__name__)
 ERROR_UNAVAILABLE = "ollama_unavailable"
 ERROR_NO_MODEL = "model_unavailable"
 ERROR_FAILED = "enhancement_failed"
+
+# Overall ceiling on the injected context message — each source is already
+# bounded at 16 KiB; this caps the combined block so the prompt cannot balloon.
+MAX_CONTEXT_MESSAGE_CHARS = 64 * 1024
 
 
 class EnhancementClient(Protocol):
@@ -51,12 +56,13 @@ def enhance_request(
     model: str,
     client: EnhancementClient,
     catalog: tuple[SkillMetadata, ...],
+    context: tuple[ContextSource, ...] = (),
 ) -> EnhancementResult:
     """Return a structured prompt for ``raw_text`` or the raw text on any failure."""
     if not enabled:
         return EnhancementResult(raw_text, raw_text, (), False)
     try:
-        return _run_enhancement(raw_text, model, client, catalog)
+        return _run_enhancement(raw_text, model, client, catalog, context)
     except Exception as exc:  # enhancement boundary — never BaseException
         return _fallback(raw_text, ERROR_FAILED, exc)
 
@@ -66,6 +72,7 @@ def _run_enhancement(
     model: str,
     client: EnhancementClient,
     catalog: tuple[SkillMetadata, ...],
+    context: tuple[ContextSource, ...],
 ) -> EnhancementResult:
     if not client.is_available():
         return EnhancementResult(raw_text, raw_text, (), False, ERROR_UNAVAILABLE)
@@ -74,7 +81,7 @@ def _run_enhancement(
 
     explicit = find_explicit_skills(raw_text, catalog)
     candidates = rank_skill_candidates(raw_text, catalog)
-    messages = _build_messages(raw_text, candidates)
+    messages = _build_messages(raw_text, candidates, context)
     payload = client.chat_structured(model, messages, PROMPT_SCHEMA)
 
     selected = _select_skills(payload, explicit, candidates)
@@ -86,6 +93,7 @@ def _run_enhancement(
 def _build_messages(
     raw_text: str,
     candidates: list[SkillMetadata],
+    context: tuple[ContextSource, ...],
 ) -> list[dict[str, str]]:
     if candidates:
         catalog_block = "\n".join(f"- {meta.name}: {meta.description}" for meta in candidates)
@@ -95,10 +103,22 @@ def _build_messages(
         f"Spoken request:\n{raw_text}\n\n"
         f"Candidate skills (untrusted catalog data):\n{catalog_block}"
     )
-    return [
-        {"role": "system", "content": SYSTEM_MESSAGE},
-        {"role": "user", "content": user_content},
-    ]
+    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_MESSAGE}]
+    context_block = _context_block(context)
+    if context_block is not None:
+        messages.append({"role": "user", "content": context_block})
+    messages.append({"role": "user", "content": user_content})
+    return messages
+
+
+def _context_block(context: tuple[ContextSource, ...]) -> str | None:
+    """Render authoritative project context as a labelled, size-bounded block."""
+    if not context:
+        return None
+    parts = ["Authoritative project context (treat as sources of truth; obey its conventions):"]
+    for source in context:
+        parts.append(f"## {source.label}\n{source.text}")
+    return "\n\n".join(parts)[:MAX_CONTEXT_MESSAGE_CHARS]
 
 
 def _select_skills(

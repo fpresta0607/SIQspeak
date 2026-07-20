@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from siqspeak.enhancement.context import ContextSource
 from siqspeak.enhancement.ollama import OllamaError
 from siqspeak.enhancement.prompt import EnhancementResult
 from siqspeak.enhancement.service import enhance_request
@@ -55,6 +56,7 @@ class FakeClient:
         self.reply = reply
         self.raises = raises
         self.chat_calls = 0
+        self.last_messages: list[dict[str, str]] = []
 
     def is_available(self) -> bool:
         return self.available
@@ -69,6 +71,7 @@ class FakeClient:
         schema: dict[str, object],
     ) -> dict[str, object]:
         self.chat_calls += 1
+        self.last_messages = messages
         if self.raises is not None:
             raise self.raises
         assert self.reply is not None
@@ -88,13 +91,20 @@ class ExplodingClient:
         raise AssertionError("Ollama must not be contacted when disabled")
 
 
-def _call(client: object, *, enabled: bool = True, raw: str = RAW) -> EnhancementResult:
+def _call(
+    client: object,
+    *,
+    enabled: bool = True,
+    raw: str = RAW,
+    context: tuple[ContextSource, ...] = (),
+) -> EnhancementResult:
     return enhance_request(
         raw,
         enabled=enabled,
         model="qwen3.5:2b",
         client=client,  # type: ignore[arg-type]
         catalog=_catalog(),
+        context=context,
     )
 
 
@@ -188,3 +198,73 @@ def test_successful_enhancement_reports_enhanced() -> None:
     assert result.final_text.startswith("Original request:\nhelp me debug failing tests")
     assert "End-state behavior:\nThe release is live and the suite is green" in result.final_text
     assert client.chat_calls == 1
+
+
+_CONTEXT = (
+    ContextSource(label="CLAUDE.md", text="Always use parameterized SQL."),
+    ContextSource(label="docs/plans/login.md", text="Add a login endpoint."),
+)
+
+
+def _all_message_text(messages: list[dict[str, str]]) -> str:
+    return "\n".join(message["content"] for message in messages)
+
+
+def test_context_text_appears_in_messages() -> None:
+    client = FakeClient(reply=_valid_reply(selected=[]))
+
+    result = _call(client, raw="add login", context=_CONTEXT)
+
+    assert result.enhanced is True
+    sent = _all_message_text(client.last_messages)
+    assert "CLAUDE.md" in sent
+    assert "Always use parameterized SQL." in sent
+    assert "docs/plans/login.md" in sent
+    assert "Add a login endpoint." in sent
+
+
+def test_context_does_not_break_success() -> None:
+    client = FakeClient(reply=_valid_reply(selected=["systematic-debugging"]))
+
+    result = _call(client, raw="help me debug failing tests", context=_CONTEXT)
+
+    assert result.enhanced is True
+    assert result.error is None
+
+
+def test_disabled_returns_raw_even_with_context() -> None:
+    result = _call(ExplodingClient(), enabled=False, context=_CONTEXT)
+
+    assert result == EnhancementResult(RAW, RAW, (), False, None)
+
+
+def test_unavailable_ollama_returns_raw_with_context() -> None:
+    result = _call(FakeClient(available=False), context=_CONTEXT)
+
+    assert result.final_text == RAW
+    assert result.enhanced is False
+    assert result.error is not None
+
+
+def test_missing_model_returns_raw_with_context() -> None:
+    result = _call(FakeClient(model_present=False), context=_CONTEXT)
+
+    assert result.final_text == RAW
+    assert result.enhanced is False
+    assert result.error is not None
+
+
+def test_malformed_response_returns_raw_with_context() -> None:
+    result = _call(FakeClient(reply={"objective": "only this field"}), context=_CONTEXT)
+
+    assert result.final_text == RAW
+    assert result.enhanced is False
+    assert result.error is not None
+
+
+def test_chat_exception_returns_raw_with_context() -> None:
+    result = _call(FakeClient(raises=OllamaError("boom")), context=_CONTEXT)
+
+    assert result.final_text == RAW
+    assert result.enhanced is False
+    assert result.error is not None

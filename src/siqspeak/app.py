@@ -30,6 +30,7 @@ from siqspeak.config import (
     WM_TIMER,
     _load_config,
 )
+from siqspeak.enhancement.context import load_workspace_context
 from siqspeak.enhancement.ollama import OllamaClient
 from siqspeak.enhancement.prompt import EnhancementResult
 from siqspeak.enhancement.service import enhance_request
@@ -383,15 +384,18 @@ def _install_enhancer(state: AppState) -> None:
             workspace = resolve_workspace(state.workspace_override, window_title)
             state.workspace_detected_root = str(workspace) if workspace else None
             catalog = discover_skills(workspace, Path.home())
+            context = load_workspace_context(workspace, Path.home())
         except Exception:
             log.exception("Skill discovery failed — enhancing without a catalog")
             catalog = ()
+            context = ()
         return enhance_request(
             raw_text,
             enabled=state.enhancement_enabled,
             model=state.enhancement_model,
             client=client,
             catalog=catalog,
+            context=context,
         )
 
     state.enhance_prompt = enhance_prompt

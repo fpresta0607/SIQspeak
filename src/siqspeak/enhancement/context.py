@@ -16,6 +16,8 @@ MAX_CONTEXT_BYTES = 16 * 1024
 
 WORKSPACE_INSTRUCTION_FILES = ("CLAUDE.md", "AGENTS.md", "CODEX.md")
 
+MAX_PLAN_SOURCES = 3
+
 
 @dataclass(frozen=True)
 class ContextSource:
@@ -43,6 +45,36 @@ def load_instruction_context(
         if text is not None:
             sources.append(ContextSource(label="~/.claude/CLAUDE.md", text=text))
     return tuple(sources)
+
+
+def load_workspace_context(
+    workspace: Path | None,
+    home: Path | None,
+) -> tuple[ContextSource, ...]:
+    """Return instruction files then the newest workspace plan docs.
+
+    Instruction files (from :func:`load_instruction_context`) are PRIMARY and
+    come first. Up to :data:`MAX_PLAN_SOURCES` most recently modified
+    ``docs/plans/*.md`` files under ``workspace`` follow as SECONDARY context,
+    each bounded to :data:`MAX_CONTEXT_BYTES`. Ordering is deterministic:
+    mtime descending, then name ascending for ties.
+    """
+    sources = list(load_instruction_context(workspace, home))
+    if workspace is not None:
+        for plan in _recent_plans(Path(workspace)):
+            text = _read_bounded(plan)
+            if text is not None:
+                sources.append(ContextSource(label=f"docs/plans/{plan.name}", text=text))
+    return tuple(sources)
+
+
+def _recent_plans(workspace: Path) -> list[Path]:
+    plans_dir = workspace / "docs" / "plans"
+    if not plans_dir.is_dir():
+        return []
+    plans = [path for path in plans_dir.glob("*.md") if path.is_file()]
+    plans.sort(key=lambda path: (-path.stat().st_mtime, path.name))
+    return plans[:MAX_PLAN_SOURCES]
 
 
 def _read_bounded(path: Path) -> str | None:
