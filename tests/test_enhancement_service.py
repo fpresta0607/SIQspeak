@@ -30,9 +30,9 @@ def _catalog() -> tuple[SkillMetadata, ...]:
 
 def _valid_reply(selected: list[str]) -> dict[str, object]:
     return {
-        "objective": "Ship the release",
-        "context": ["Existing service"],
-        "requirements": ["Run the suite"],
+        "end_state": "The release is live and the suite is green",
+        "sources_of_truth": ["deploy/release.md"],
+        "hard_constraints": ["Run the suite before publishing"],
         "acceptance_criteria": ["All green"],
         "verification": ["pytest"],
         "selected_skills": selected,
@@ -186,5 +186,5 @@ def test_successful_enhancement_reports_enhanced() -> None:
     assert result.error is None
     assert result.raw_text == "help me debug failing tests"
     assert result.final_text.startswith("Original request:\nhelp me debug failing tests")
-    assert "Objective:\nShip the release" in result.final_text
+    assert "End-state behavior:\nThe release is live and the suite is green" in result.final_text
     assert client.chat_calls == 1
