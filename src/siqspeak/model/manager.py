@@ -74,7 +74,6 @@ def _start_model_load(state: AppState, name: str) -> None:
     state.model_loading_name = name
     state.model_loading_start = time.time()
     state.model_loading_is_download = False
-    state.model_hover_row = None
     log.info("Loading model: %s", name)
 
     def _load() -> None:
@@ -107,7 +106,6 @@ def _start_model_download_and_load(state: AppState, name: str) -> None:
     state.model_loading_name = name
     state.model_loading_start = time.time()
     state.model_loading_is_download = True
-    state.model_hover_row = None
     state.download_progress = 0.0
     state.download_error = None
     log.info("Downloading model: %s (~%d MB)", name, MODEL_SIZES_MB.get(name, 0))

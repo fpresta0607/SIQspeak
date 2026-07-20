@@ -18,15 +18,12 @@ from siqspeak.audio.recording import _load_log, transcription_worker_loop
 from siqspeak.config import (
     ACTIVE_H,
     ACTIVE_W,
-    AVAILABLE_MODELS,
     COPY_CONFIRM_SECONDS,
     ENHANCEMENT_MODEL,
     IDLE_H,
     IDLE_W,
     LOG_PANEL_MAX_VISIBLE,
     MODEL_NAME,
-    MODEL_PANEL_HEADER_H,
-    MODEL_PANEL_ROW_H,
     SCRIPT_DIR,
     STATE_NAME,
     WM_APP_STATE,
@@ -286,23 +283,6 @@ def message_loop(state: AppState) -> None:
 
                 elif state.active_panel == "model":
                     _handle_model_click(state)
-                    # Hover tracking for model rows (skip during loading)
-                    if not state.model_loading:
-                        if state.model_panel_hwnd and _is_cursor_over_hwnd(state.model_panel_hwnd):
-                            pt = ctypes.wintypes.POINT()
-                            user32.GetCursorPos(ctypes.byref(pt))
-                            rect = ctypes.wintypes.RECT()
-                            user32.GetWindowRect(state.model_panel_hwnd, ctypes.byref(rect))
-                            ry = pt.y - rect.top - MODEL_PANEL_HEADER_H
-                            row = ry // MODEL_PANEL_ROW_H
-                            hover = row if 0 <= row < len(AVAILABLE_MODELS) else None
-                        else:
-                            hover = None
-                        if hover != state.model_hover_row:
-                            state.model_hover_row = hover
-                            from siqspeak.overlay.panels import _show_panel_window
-                            buf, pw, ph = _render_model_panel(state)
-                            _show_panel_window(state, state.model_panel_hwnd, buf, pw, ph)
                 elif state.active_panel == "settings":
                     _handle_settings_click(state)
                     # Re-render only when settings state changes (e.g. a click or

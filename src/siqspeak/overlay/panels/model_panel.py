@@ -28,7 +28,6 @@ log = logging.getLogger("siqspeak")
 # Fully opaque background — no see-through
 BG = (PILL_BG[0], PILL_BG[1], PILL_BG[2], 255)
 DIVIDER = (GRAY[0], GRAY[1], GRAY[2], 80)
-ROW_HOVER = (30, 38, 58, 255)
 GREEN = (80, 220, 120)
 
 
@@ -120,12 +119,6 @@ def _render_model_panel(state: AppState) -> tuple[np.ndarray, int, int]:
         is_confirming = name == state.download_confirm_name and not state.model_loading
         has_error = bool(state.download_error) and name == state.model_loading_name
         is_cached = True if is_loaded else _is_model_cached(name)
-
-        is_hovered = idx == state.model_hover_row and not is_loaded and not is_confirming
-        if is_hovered:
-            draw.rounded_rectangle(
-                [4, y + 2, panel_w - 4, y + MODEL_PANEL_ROW_H - 2],
-                radius=8, fill=ROW_HOVER)
 
         name_y = y + 10
         tier_y = y + 34
