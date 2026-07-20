@@ -12,7 +12,29 @@ from pathlib import Path
 
 from siqspeak.enhancement.terminal import terminal_cwd
 
-WINDOWS_PATH = re.compile(r"[A-Za-z]:\\[^|<>\"?*]+")
+DRIVE_START = re.compile(r"[A-Za-z]:\\")
+_FORBIDDEN_PATH_CHARS = re.compile(r'[|<>"?*]')
+_MIN_DIR_LEN = 3  # a drive root like ``C:\``
+
+
+def _longest_existing_dir_prefix(candidate: str) -> Path | None:
+    """Return the longest prefix of ``candidate`` that names an existing dir.
+
+    Window titles append junk after an embedded path (``" — Cursor"``,
+    ``" - recording.py"``); trimming one character at a time from the right
+    recovers the real directory. Bounded by the candidate length, stops at
+    drive-root width, and never raises on a malformed candidate.
+    """
+    text = candidate
+    while len(text.rstrip()) >= _MIN_DIR_LEN:
+        trimmed = text.rstrip()
+        try:
+            if Path(trimmed).is_dir():
+                return Path(trimmed)
+        except (OSError, ValueError):
+            pass
+        text = text[:-1]
+    return None
 
 
 def find_repository_root(path: Path) -> Path | None:
@@ -48,8 +70,12 @@ def resolve_workspace(
         terminal_root = find_repository_root(cwd)
         if terminal_root is not None:
             return terminal_root
-    for match in WINDOWS_PATH.finditer(window_title):
-        detected = Path(match.group(0).rstrip(" -"))
-        if detected.exists():
-            return find_repository_root(detected)
+    for match in DRIVE_START.finditer(window_title):
+        tail = _FORBIDDEN_PATH_CHARS.split(window_title[match.start():], maxsplit=1)[0]
+        detected = _longest_existing_dir_prefix(tail)
+        if detected is None:
+            continue
+        root = find_repository_root(detected)
+        if root is not None:
+            return root
     return None

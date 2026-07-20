@@ -93,7 +93,8 @@ def test_workspace_display_auto_when_only_detected() -> None:
 def test_workspace_display_not_detected() -> None:
     status, path = _workspace_display(AppState())
     assert status == "Auto"
-    assert path == "Not detected"
+    assert path.startswith("Not detected yet")
+    assert "focused window" in path
 
 
 @pytest.mark.parametrize(
