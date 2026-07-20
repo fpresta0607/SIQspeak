@@ -9,9 +9,11 @@ Powered by OpenAI's [Whisper](https://github.com/openai/whisper) model running l
 - **Hold-to-talk** - Hold `Ctrl+Shift+Space` to record, release to transcribe
 - **Auto-type** - Transcribed text is typed directly into whatever window was active
 - **100% local** - Whisper runs on your CPU, nothing leaves your machine
+- **Optional prompt enhancement** - Rewrite a spoken request into a structured coding prompt with a local model (opt-in, off by default)
+- **Curated English models** - Five hand-picked English speech models from fastest to best quality
 - **System tray** - Runs quietly in the background, right-click to quit
 - **Visual overlay** - Animated floating pill shows recording/transcribing status with audio-reactive dots
-- **Transcription history** - Hover the idle pill to see recent transcriptions, click to copy
+- **Transcription history** - Click the idle pill to see recent transcriptions, click a copy icon to copy
 - **No API keys** - No accounts, no subscriptions, no internet required after setup
 
 ## Requirements
@@ -56,7 +58,8 @@ You should see something like `Python 3.12.x`. If you get an error, restart your
 3. A black command window will open and walk you through the setup:
    - It creates a Python virtual environment
    - Installs all dependencies
-   - Asks if you want to pre-download the speech model (~75 MB)
+   - Downloads the default `base.en` speech model (~141 MB)
+   - Asks if you want the optional local prompt enhancer (~2.7 GB, requires Ollama)
    - Asks if you want a desktop shortcut
    - Asks if you want to run SIQspeak right away
 
@@ -77,7 +80,7 @@ A small floating pill will appear on your screen and a tray icon will show in th
 | **Hold** `Ctrl+Shift+Space` | Recording starts - pill expands with cyan animated dots |
 | **Release** `Ctrl+Shift+Space` | Recording stops, transcription begins - dots turn white |
 | Transcription completes | Text is typed into the window that was active when you started recording |
-| **Hover** the idle pill | Shows transcription history panel |
+| **Click** the idle pill | Shows transcription history panel |
 | **Click copy icon** in history | Copies that transcription to clipboard |
 | **Right-click** tray icon > Quit | Exit the app |
 
@@ -86,6 +89,46 @@ A small floating pill will appear on your screen and a tray icon will show in th
 - **Gray** - Idle, ready
 - **Cyan** - Recording
 - **Dark blue** - Transcribing
+- **Blue** - Enhancing (rewriting the transcript into a structured prompt)
+
+## Prompt Enhancement (Optional)
+
+By default SIQspeak types the raw transcript exactly as Whisper heard it. You can
+turn on prompt enhancement in the settings panel to have a local model rewrite a
+spoken request into a structured coding prompt (objective, context, requirements,
+acceptance criteria, verification) before it is typed.
+
+- **Raw vs. enhanced toggle** - Enhancement is off by default. When off, the raw
+  transcript is typed as soon as Whisper finishes. When on, the overlay shows an
+  "enhancing" state while the local model works, then types the structured prompt.
+  Enhancement adds processing time; it is not instantaneous.
+- **Local-only privacy boundary** - Enhancement runs against a local Ollama server
+  on `127.0.0.1` only. No transcript or prompt text leaves your machine, and there
+  is no configurable remote endpoint.
+- **Agent Skill selection without execution** - SIQspeak reads bounded YAML
+  metadata from Agent Skill files in your workspace and home directory to suggest
+  relevant skill names in the prompt. It never opens, interprets, or executes a
+  skill body - skill names and descriptions are treated as untrusted catalog data.
+- **Workspace override** - Skill discovery looks at the detected workspace of the
+  active window (ascending to a Git root). You can override the workspace folder in
+  settings; the override persists and invalid auto-detection never guesses.
+- **Raw fallback behavior** - If enhancement is disabled, Ollama is not running,
+  the model is missing, or the response is malformed, SIQspeak types the preserved
+  raw transcript. Enhancement never loses your words.
+
+### Ollama requirements
+
+Enhancement requires [Ollama for Windows](https://ollama.com/download) and a local
+model. `setup.bat` can pull the default model for you, or run it manually:
+
+```
+ollama pull qwen3.5:2b
+```
+
+| Enhancer model | Size |
+|----------------|------|
+| `qwen3.5:2b` (default) | ~2.7 GB |
+| `qwen3.5:4b` | larger, higher quality |
 
 ## Run at Startup (Optional)
 
@@ -106,19 +149,23 @@ Settings are managed via the overlay UI. Constants live in `src/siqspeak/config.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `MODEL_NAME` | `"tiny"` | Whisper model size (`tiny`, `base`, `small`, `medium`, `large-v3`) |
+| `MODEL_NAME` | `"base.en"` | Default Whisper speech model |
+| `ENHANCEMENT_MODEL` | `"qwen3.5:2b"` | Default local prompt-enhancer model (Ollama) |
 | `SAMPLE_RATE` | `16000` | Audio sample rate in Hz |
 | `HOTKEY` | `Ctrl+Shift+Space` | Hold-to-record hotkey |
 
-Larger models are more accurate but slower. The `tiny` model works well for English dictation on most hardware.
+SIQspeak ships a curated set of five English-only speech models, chosen for a
+good speed/accuracy trade-off. Pick one from the model panel; larger models are
+more accurate but slower. `base.en` is the default and works well for English
+dictation on most hardware.
 
-| Model | Size | Relative Speed |
-|-------|------|---------------|
-| `tiny` | ~75 MB | Fastest |
-| `base` | ~140 MB | Fast |
-| `small` | ~460 MB | Moderate |
-| `medium` | ~1.5 GB | Slow |
-| `large-v3` | ~3 GB | Slowest |
+| Model | Tier | Size |
+|-------|------|------|
+| `tiny.en` | Fastest | ~75 MB |
+| `base.en` | Default | ~141 MB |
+| `small.en` | Balanced | ~464 MB |
+| `distil-medium.en` | High Quality | ~755 MB |
+| `distil-large-v3.5` | Best Quality | ~1.4 GB |
 
 ## Troubleshooting
 
@@ -132,10 +179,16 @@ Python isn't installed or isn't in your PATH. Reinstall Python from [python.org]
 Another application is using `Ctrl+Shift+Space`. Close the conflicting app or change the hotkey constants in `src/siqspeak/config.py`.
 
 ### Model download fails
-The speech model downloads from Hugging Face on first run (~75 MB). If it fails:
+Speech models download anonymously from Hugging Face on first use (`base.en` is ~141 MB). No account or token is required. If it fails:
 - Check your internet connection
 - Try again later (Hugging Face may be temporarily slow)
 - If you're behind a corporate firewall/proxy, you may need to download the model manually
+
+### Enhancement does nothing / types the raw transcript
+Prompt enhancement is off by default and falls back to the raw transcript whenever it cannot run. Check that:
+- Enhancement is toggled on in the settings panel
+- Ollama is installed and running ([ollama.com/download](https://ollama.com/download))
+- The enhancer model is pulled (`ollama pull qwen3.5:2b`)
 
 ### No audio / transcription is empty
 - Check that your microphone is set as the default recording device in Windows Sound settings
@@ -157,6 +210,22 @@ No clipboard is used for pasting - text is injected directly as keystrokes.
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, code quality tools, and PR guidelines.
+
+Run the checks from the project root:
+
+```bash
+# Lint
+.venv/Scripts/python.exe -m ruff check .
+
+# Type-check
+.venv/Scripts/python.exe -m pyright
+
+# Test
+.venv/Scripts/python.exe -m pytest
+
+# Enhancement package coverage
+.venv/Scripts/python.exe -m pytest tests/test_skills.py tests/test_ollama.py tests/test_prompt.py tests/test_enhancement_service.py --cov=siqspeak.enhancement --cov-report=term-missing
+```
 
 ## License
 

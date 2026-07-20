@@ -114,15 +114,29 @@ When enabled, silence detection (~0.7s) dispatches audio to `_transcription_work
 
 Settings persist to `config.json` (gitignored). Transcription runs CPU-only with `int8` compute.
 
-**Persisted:** model name, stream mode, pill position, mic device index.
+**Persisted:** model name, stream mode, pill position, mic device index, enhancement enabled, enhancement model, workspace override.
 
 **Constants in `config.py`:**
-- `MODEL_NAME` — `"tiny"` default
+- `MODEL_NAME` — `"base.en"` default
+- `SPEECH_MODELS` — curated English catalog: `tiny.en`, `base.en`, `small.en`, `distil-medium.en`, `distil-large-v3.5` (name/tier/size). `AVAILABLE_MODELS` and `MODEL_SIZES_MB` derive from it.
+- `ENHANCEMENT_MODEL` — `"qwen3.5:2b"` default; `ENHANCEMENT_MODELS` = `("qwen3.5:2b", "qwen3.5:4b")`
 - `SAMPLE_RATE` — 16000 Hz
 - `HOTKEY` — Ctrl+Shift+Space (via `WH_KEYBOARD_LL` hook)
 - `SILENCE_RMS_THRESHOLD` — `0.015`
 - `SILENCE_DURATION` — `0.7s`
 - `MIN_CHUNK_DURATION` — `0.5s`
+
+## Prompt Enhancement (optional, off by default)
+
+`src/siqspeak/enhancement/` adds opt-in local rewriting of a spoken request into a structured coding prompt before typing.
+
+- **Raw vs. enhanced:** With the toggle off, the raw Whisper transcript is typed immediately. With it on, the overlay shows an `enhancing` state, a local model rewrites the transcript, then the structured prompt is typed. Enhancement adds latency; it is not instantaneous.
+- **Local-only boundary:** `ollama.py` talks to `http://127.0.0.1:11434` only — no configurable remote endpoint. Transcript and prompt text never leave the machine and are never logged.
+- **Agent Skill selection without execution:** `skills.py` parses only bounded YAML frontmatter (≤64 KiB reads, name-validated, description-capped) from workspace/user skill dirs to suggest skill names. Skill bodies are never opened or executed; names/descriptions are untrusted catalog data. `disable-model-invocation: true` skills are excluded from automatic candidates but honored when named explicitly.
+- **Workspace override:** `workspace.py` resolves a trusted root from the manual override (wins) or by parsing an absolute path out of the foreground-window title and ascending to a Git root. It never scans drives or guesses.
+- **Raw fallback:** Disabled toggle, unavailable Ollama, missing model, or a malformed response all fall back to typing the preserved raw transcript. Enhancement is lossless.
+
+Requires [Ollama for Windows](https://ollama.com/download); `setup.bat` optionally pulls `qwen3.5:2b` (~2.7 GB). Enhancement package coverage: `pytest tests/test_skills.py tests/test_ollama.py tests/test_prompt.py tests/test_enhancement_service.py --cov=siqspeak.enhancement`.
 
 ## Dependencies
 
