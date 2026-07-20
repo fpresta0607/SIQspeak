@@ -91,12 +91,16 @@ class ExplodingClient:
         raise AssertionError("Ollama must not be contacted when disabled")
 
 
+STYLE = ("add a login endpoint with jwt", "wire up the retry loop")
+
+
 def _call(
     client: object,
     *,
     enabled: bool = True,
     raw: str = RAW,
     context: tuple[ContextSource, ...] = (),
+    style_examples: tuple[str, ...] = (),
 ) -> EnhancementResult:
     return enhance_request(
         raw,
@@ -105,6 +109,7 @@ def _call(
         client=client,  # type: ignore[arg-type]
         catalog=_catalog(),
         context=context,
+        style_examples=style_examples,
     )
 
 
@@ -264,6 +269,65 @@ def test_malformed_response_returns_raw_with_context() -> None:
 
 def test_chat_exception_returns_raw_with_context() -> None:
     result = _call(FakeClient(raises=OllamaError("boom")), context=_CONTEXT)
+
+    assert result.final_text == RAW
+    assert result.enhanced is False
+    assert result.error is not None
+
+
+def test_style_examples_appear_in_messages() -> None:
+    client = FakeClient(reply=_valid_reply(selected=[]))
+
+    result = _call(client, raw="add login", style_examples=STYLE)
+
+    assert result.enhanced is True
+    sent = _all_message_text(client.last_messages)
+    assert "mirror their tone and structure, NOT their content" in sent
+    assert "- add a login endpoint with jwt" in sent
+    assert "- wire up the retry loop" in sent
+
+
+def test_no_style_block_when_examples_empty() -> None:
+    client = FakeClient(reply=_valid_reply(selected=[]))
+
+    _call(client, raw="add login", style_examples=())
+
+    sent = _all_message_text(client.last_messages)
+    assert "mirror their tone and structure" not in sent
+
+
+def test_disabled_returns_raw_even_with_style() -> None:
+    result = _call(ExplodingClient(), enabled=False, style_examples=STYLE)
+
+    assert result == EnhancementResult(RAW, RAW, (), False, None)
+
+
+def test_unavailable_ollama_returns_raw_with_style() -> None:
+    result = _call(FakeClient(available=False), style_examples=STYLE)
+
+    assert result.final_text == RAW
+    assert result.enhanced is False
+    assert result.error is not None
+
+
+def test_missing_model_returns_raw_with_style() -> None:
+    result = _call(FakeClient(model_present=False), style_examples=STYLE)
+
+    assert result.final_text == RAW
+    assert result.enhanced is False
+    assert result.error is not None
+
+
+def test_malformed_response_returns_raw_with_style() -> None:
+    result = _call(FakeClient(reply={"objective": "only this field"}), style_examples=STYLE)
+
+    assert result.final_text == RAW
+    assert result.enhanced is False
+    assert result.error is not None
+
+
+def test_chat_exception_returns_raw_with_style() -> None:
+    result = _call(FakeClient(raises=OllamaError("boom")), style_examples=STYLE)
 
     assert result.final_text == RAW
     assert result.enhanced is False
