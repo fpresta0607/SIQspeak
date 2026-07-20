@@ -3,7 +3,16 @@ from __future__ import annotations
 import queue
 import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from siqspeak.enhancement.prompt import EnhancementResult
+
+
+class EnhancePrompt(Protocol):
+    """Boundary that turns a raw transcript into an enhancement result."""
+
+    def __call__(self, raw_text: str) -> EnhancementResult: ...
 
 
 @dataclass
@@ -62,7 +71,6 @@ class AppState:
     active_panel: str | None = None  # "info" | "model" | "settings" | None
     transcription_log: list[dict] = field(default_factory=list)
     copy_debounce: bool = False
-    copy_hover_row: int | None = None
     copied_row: int | None = None
     copied_time: float = 0.0
     log_entry_heights: list[int] = field(default_factory=list)
@@ -86,7 +94,6 @@ class AppState:
     settings_click_debounce: bool = False
 
     # Model panel hover
-    model_hover_row: int | None = None
 
     # Loading timeout
     model_loading_start: float = 0.0
@@ -104,19 +111,19 @@ class AppState:
     stream_focus_done: bool = False
     stream_texts: list[str] = field(default_factory=list)
 
+    # Local prompt enhancement
+    enhancement_enabled: bool = False
+    enhancement_model: str = "qwen3.5:2b"
+    enhancement_status: str | None = None
+    enhancement_error: str | None = None
+    enhancement_pull_progress: float = 0.0
+    workspace_override: str | None = None
+    workspace_detected_root: str | None = None
+    skill_catalog: list[dict] = field(default_factory=list)
+    enhance_prompt: EnhancePrompt | None = None  # injected boundary; None disables enhancement
+
     # Tray
     icon: Any = None  # pystray.Icon
-
-    # HuggingFace auth
-    needs_hf_auth: bool = False
-    hf_username: str | None = None
-    hf_token_input: str = ""
-    hf_auth_error: str | None = None
-    hf_auth_error_time: float = 0.0
-    hf_auth_verifying: bool = False
-    hf_auth_success: bool = False
-    hf_auth_success_time: float = 0.0
-    hf_pending_model: str | None = None  # model to download after auth
 
     # Hooks
     mouse_hook: int | None = None

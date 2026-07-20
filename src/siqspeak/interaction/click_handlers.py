@@ -8,17 +8,28 @@ from siqspeak.config import (
     _DRAG_THRESHOLD,
     _ZONE_PANEL,
     AVAILABLE_MODELS,
+    ENHANCEMENT_MODELS,
     IDLE_H,
     IDLE_ICON_ZONE_W,
     IDLE_W,
     MODEL_PANEL_HEADER_H,
     MODEL_PANEL_ROW_H,
-    SETTINGS_HEADER_H,
     save_state_config,
 )
 from siqspeak.interaction.hover import _is_cursor_over_hwnd
+from siqspeak.overlay.panels.settings_panel import (
+    MIC_ROW_H,
+    SETTINGS_ROW_H,
+    SettingsAction,
+    _open_ollama_download,
+    _refresh_enhancer_status,
+    _settings_layout,
+    _start_model_pull,
+    settings_action_at_y,
+)
 from siqspeak.overlay.pill import _pill_screen_rect
 from siqspeak.state import AppState
+from siqspeak.win32.folder_dialog import select_folder
 
 log = logging.getLogger("siqspeak")
 
@@ -129,10 +140,7 @@ def _handle_idle_pill_click(state: AppState) -> None:
 
 
 def _handle_model_click(state: AppState) -> None:
-    """Detect click on a model row -- two-click confirmation for uncached models.
-
-    Also handles clicks on the HuggingFace auth dialog when ``state.needs_hf_auth``.
-    """
+    """Detect click on a model row -- two-click confirmation for uncached models."""
     from siqspeak.model.manager import (
         _is_model_cached,
         _start_model_download_and_load,
@@ -157,11 +165,6 @@ def _handle_model_click(state: AppState) -> None:
         return
 
     state.model_click_debounce = True
-
-    # --- HuggingFace auth dialog ---
-    if state.needs_hf_auth and not state.hf_auth_success:
-        _handle_hf_auth_click(state)
-        return
 
     pt = ctypes.wintypes.POINT()
     user32.GetCursorPos(ctypes.byref(pt))
@@ -189,138 +192,63 @@ def _handle_model_click(state: AppState) -> None:
             _show_model_panel(state)
 
 
-def _handle_hf_auth_click(state: AppState) -> None:
-    """Handle clicks within the HuggingFace auth dialog."""
-    import threading
-    import time
+def _apply_enhancement_toggle(state: AppState) -> None:
+    """Flip the prompt-enhancement toggle and persist immediately."""
+    state.enhancement_enabled = not state.enhancement_enabled
+    save_state_config(state)
 
-    from siqspeak.hf_auth import open_token_page, save_token, validate_token
-    from siqspeak.model.manager import _retry_download_after_auth
-    from siqspeak.overlay.panels.model_panel import AUTH_BTN_Y, AUTH_BUTTONS, _show_model_panel
 
-    user32 = ctypes.windll.user32
+def _cycle_enhancer_model(state: AppState) -> None:
+    """Advance to the next approved enhancer model and persist."""
+    try:
+        idx = ENHANCEMENT_MODELS.index(state.enhancement_model)
+    except ValueError:
+        idx = -1
+    state.enhancement_model = ENHANCEMENT_MODELS[(idx + 1) % len(ENHANCEMENT_MODELS)]
+    save_state_config(state)
 
-    pt = ctypes.wintypes.POINT()
-    user32.GetCursorPos(ctypes.byref(pt))
-    rect = ctypes.wintypes.RECT()
-    user32.GetWindowRect(state.model_panel_hwnd, ctypes.byref(rect))
 
-    rx = pt.x - rect.left
-    ry = pt.y - rect.top
+def _apply_workspace_selection(state: AppState, folder: str | None) -> bool:
+    """Persist a chosen workspace folder; return whether it changed."""
+    if not folder:
+        return False
+    state.workspace_override = folder
+    save_state_config(state)
+    return True
 
-    btn_y = AUTH_BTN_Y
-    if ry < btn_y or ry > btn_y + 32:
+
+def _install_model_action(state: AppState) -> None:
+    """Act on the enhancer status row: open Ollama download or start a pull."""
+    if state.enhancement_status == "ollama_missing":
+        _open_ollama_download()
+    elif state.enhancement_status in ("model_missing", "error", None):
+        _start_model_pull(state)
+    # "ready" / "pulling": nothing actionable.
+
+
+def _handle_mic_click(state: AppState, ry: int) -> None:
+    """Toggle the mic dropdown or select a device within the mic band."""
+    mic_row = _settings_layout(state)[0]
+    header_bottom = mic_row.y + SETTINGS_ROW_H
+    if ry < header_bottom:
+        state.mic_expanded = not state.mic_expanded
         return
-
-    # Determine which button was clicked
-    clicked = None
-    for i, btn in enumerate(AUTH_BUTTONS):
-        if btn["x1"] <= rx <= btn["x2"]:
-            clicked = i
-            break
-
-    if clicked is None:
-        return
-
-    # --- Button 0: Open Browser ---
-    if clicked == 0:
-        log.info("HF auth: opening browser")
-        open_token_page()
-        return
-
-    # --- Button 1: Paste & Verify ---
-    if clicked == 1:
-        log.info("HF auth: paste & verify")
-        # Read token from clipboard
-        token = ""
-        try:
-            import pyperclip
-            token = pyperclip.paste().strip()
-        except Exception:
-            pass
-
-        if not token:
-            # Fallback: Win32 clipboard
-            try:
-                kernel32 = ctypes.windll.kernel32
-                user32_lib = ctypes.windll.user32
-                user32_lib.OpenClipboard(0)
-                # Try CF_UNICODETEXT first (13), then CF_TEXT (1)
-                handle = user32_lib.GetClipboardData(13)
-                if handle:
-                    kernel32.GlobalLock.restype = ctypes.c_wchar_p
-                    ptr = kernel32.GlobalLock(handle)
-                    if ptr:
-                        token = str(ptr).strip()
-                    kernel32.GlobalUnlock(handle)
-                if not token:
-                    handle = user32_lib.GetClipboardData(1)
-                    if handle:
-                        token = ctypes.c_char_p(handle).value.decode("utf-8", errors="ignore").strip()
-                user32_lib.CloseClipboard()
-            except Exception as e:
-                log.warning("Clipboard read failed: %s", e)
-
-        if not token:
-            state.hf_auth_error = "Clipboard is empty - copy your token first"
-            state.hf_auth_error_time = time.time()
-            _show_model_panel(state)
-            return
-
-        if not token.startswith("hf_"):
-            state.hf_auth_error = "Token should start with hf_ - check and copy again"
-            state.hf_auth_error_time = time.time()
-            _show_model_panel(state)
-            return
-
-        # Verify in background thread
-        state.hf_auth_verifying = True
-        _show_model_panel(state)
-
-        def _verify():
-            username = validate_token(token)
-            if username:
-                if save_token(token):
-                    state.hf_username = username
-                    state.hf_auth_verifying = False
-                    state.hf_auth_success = True
-                    state.hf_auth_success_time = time.time()
-                    state.hf_auth_error = None
-                    _show_model_panel(state)
-                    # Auto-dismiss after 1.5s and start download
-                    time.sleep(1.5)
-                    state.hf_auth_success = False
-                    state.needs_hf_auth = False
-                    _retry_download_after_auth(state)
-                else:
-                    state.hf_auth_verifying = False
-                    state.hf_auth_error = "Token valid but failed to save"
-                    state.hf_auth_error_time = time.time()
-                    _show_model_panel(state)
-            else:
-                state.hf_auth_verifying = False
-                state.hf_auth_error = "Invalid token - check and try again"
-                state.hf_auth_error_time = time.time()
-                _show_model_panel(state)
-
-        threading.Thread(target=_verify, daemon=True).start()
-        return
-
-    # --- Button 2: Cancel ---
-    if clicked == 2:
-        log.info("HF auth: cancelled")
-        state.needs_hf_auth = False
-        state.hf_pending_model = None
-        state.hf_auth_error = None
-        _show_model_panel(state)
-        return
+    if state.mic_expanded and state.mic_devices:
+        dev_idx = (ry - header_bottom) // MIC_ROW_H
+        if 0 <= dev_idx < len(state.mic_devices):
+            dev = state.mic_devices[dev_idx]
+            state.mic_device = dev["index"]
+            state.mic_expanded = False
+            log.info("Mic changed to device %d: %s", dev["index"], dev["name"])
+            save_state_config(state)
 
 
 def _handle_settings_click(state: AppState) -> None:
-    """Detect click on mic dropdown or Quit."""
-    from siqspeak.overlay.panels import _show_panel_window
-    from siqspeak.overlay.panels.settings_panel import MIC_ROW_H, _render_settings_panel
+    """Route a click within the settings panel to its action.
 
+    State is only mutated here; the message loop re-renders when the settings
+    signature changes, so pointer movement never drives a redraw.
+    """
     user32 = ctypes.windll.user32
 
     if not (user32.GetAsyncKeyState(0x01) & 0x8000):
@@ -335,52 +263,29 @@ def _handle_settings_click(state: AppState) -> None:
 
     state.settings_click_debounce = True
 
-    # Get click position relative to panel
     pt = ctypes.wintypes.POINT()
     user32.GetCursorPos(ctypes.byref(pt))
     rect = ctypes.wintypes.RECT()
     user32.GetWindowRect(state.settings_panel_hwnd, ctypes.byref(rect))
     ry = pt.y - rect.top
 
-    row_h = 44
-    row_start = SETTINGS_HEADER_H + 8
-
-    if ry < SETTINGS_HEADER_H:
+    action = settings_action_at_y(state, ry)
+    if action is None:
         return
-
-    def _rerender() -> None:
-        buf, pw, ph = _render_settings_panel(state)
-        _show_panel_window(state, state.settings_panel_hwnd, buf, pw, ph)
-
-    # Calculate zone boundaries
-    mic_top = row_start
-    mic_bottom = mic_top + row_h
-
-    # Mic dropdown items (below mic header row when expanded)
-    mic_list_top = mic_bottom
-    if state.mic_expanded and state.mic_devices:
-        mic_list_bottom = mic_list_top + len(state.mic_devices) * MIC_ROW_H + 8
-    else:
-        mic_list_bottom = mic_list_top
-
-    quit_top = mic_list_bottom + 12
-
-    # --- Mic header row: toggle dropdown ---
-    if mic_top <= ry < mic_bottom:
-        state.mic_expanded = not state.mic_expanded
-        _rerender()
-    # --- Mic device list item ---
-    elif state.mic_expanded and mic_list_top <= ry < mic_list_bottom:
-        dev_idx = (ry - mic_list_top) // MIC_ROW_H
-        if 0 <= dev_idx < len(state.mic_devices):
-            dev = state.mic_devices[dev_idx]
-            state.mic_device = dev["index"]
-            state.mic_expanded = False
-            log.info("Mic changed to device %d: %s", dev["index"], dev["name"])
-            save_state_config(state)
-            _rerender()
-    # --- Quit button ---
-    elif ry >= quit_top:
+    if action == SettingsAction.MICROPHONE:
+        _handle_mic_click(state, ry)
+    elif action == SettingsAction.ENHANCEMENT_TOGGLE:
+        _apply_enhancement_toggle(state)
+    elif action == SettingsAction.WORKSPACE:
+        folder = select_folder(hwnd=state.settings_panel_hwnd or 0)
+        if _apply_workspace_selection(state, folder):
+            _refresh_enhancer_status(state)
+    elif action == SettingsAction.ENHANCER_MODEL:
+        _cycle_enhancer_model(state)
+        _refresh_enhancer_status(state)
+    elif action == SettingsAction.INSTALL_MODEL:
+        _install_model_action(state)
+    elif action == SettingsAction.QUIT:
         state.should_quit = True
         if state.icon:
             state.icon.stop()

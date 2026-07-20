@@ -7,6 +7,7 @@ import logging
 import sys
 import threading
 import time
+from pathlib import Path
 
 from faster_whisper import WhisperModel
 from pystray import Icon, Menu, MenuItem
@@ -17,19 +18,23 @@ from siqspeak.audio.recording import _load_log, transcription_worker_loop
 from siqspeak.config import (
     ACTIVE_H,
     ACTIVE_W,
-    AVAILABLE_MODELS,
+    COPY_CONFIRM_SECONDS,
+    ENHANCEMENT_MODEL,
     IDLE_H,
     IDLE_W,
     LOG_PANEL_MAX_VISIBLE,
     MODEL_NAME,
-    MODEL_PANEL_HEADER_H,
-    MODEL_PANEL_ROW_H,
     SCRIPT_DIR,
     STATE_NAME,
     WM_APP_STATE,
     WM_TIMER,
     _load_config,
 )
+from siqspeak.enhancement.ollama import OllamaClient
+from siqspeak.enhancement.prompt import EnhancementResult
+from siqspeak.enhancement.service import enhance_request
+from siqspeak.enhancement.skills import discover_skills
+from siqspeak.enhancement.workspace import resolve_workspace
 from siqspeak.hotkey import on_hotkey_down, quit_app
 from siqspeak.interaction.click_handlers import (
     _get_idle_icon_zone,
@@ -40,12 +45,15 @@ from siqspeak.interaction.click_handlers import (
 from siqspeak.interaction.hover import (
     _handle_copy_click,
     _is_cursor_over_hwnd,
-    _update_copy_hover,
 )
 from siqspeak.logging_setup import configure_logging
 from siqspeak.overlay.panels import _hide_all_panels, _update_panel_content
 from siqspeak.overlay.panels.log_panel import _render_log_panel, _show_log_panel
 from siqspeak.overlay.panels.model_panel import _render_model_panel
+from siqspeak.overlay.panels.settings_panel import (
+    _render_settings_panel,
+    _settings_render_signature,
+)
 from siqspeak.overlay.panels.welcome import _hide_welcome, _show_welcome
 from siqspeak.overlay.pill import _set_pill_mode
 from siqspeak.overlay.rendering import _build_idle_frame, _render_frame
@@ -162,6 +170,8 @@ def message_loop(state: AppState) -> None:
     phase = 0.0
     current_state = "idle"
     topmost_tick = 0
+    settings_sig: tuple | None = None
+    settings_h = 0
     was_model_loading = False
 
     msg = ctypes.wintypes.MSG()
@@ -256,17 +266,14 @@ def message_loop(state: AppState) -> None:
 
                 _handle_idle_pill_click(state)
 
-                # Handle clicks within active panels
+                # Handle clicks within active panels. Pointer movement has no
+                # render path — only a copy confirmation (or its expiry) redraws.
                 if state.active_panel == "info":
                     prev_copied = state.copied_row
                     _handle_copy_click(state)
-                    prev_copy_hover = state.copy_hover_row
-                    _update_copy_hover(state)
-                    needs_rerender = (
-                        state.copy_hover_row != prev_copy_hover
-                        or state.copied_row != prev_copied
-                    )
-                    if state.copied_row is not None and (time.time() - state.copied_time) >= 1.5:
+                    needs_rerender = state.copied_row != prev_copied
+                    if (state.copied_row is not None
+                            and (time.time() - state.copied_time) >= COPY_CONFIRM_SECONDS):
                         state.copied_row = None
                         needs_rerender = True
                     if needs_rerender:
@@ -276,42 +283,21 @@ def message_loop(state: AppState) -> None:
 
                 elif state.active_panel == "model":
                     _handle_model_click(state)
-                    # Hover tracking for model rows (skip during loading)
-                    if not state.model_loading:
-                        if state.model_panel_hwnd and _is_cursor_over_hwnd(state.model_panel_hwnd):
-                            pt = ctypes.wintypes.POINT()
-                            user32.GetCursorPos(ctypes.byref(pt))
-                            rect = ctypes.wintypes.RECT()
-                            user32.GetWindowRect(state.model_panel_hwnd, ctypes.byref(rect))
-                            ry = pt.y - rect.top - MODEL_PANEL_HEADER_H
-                            row = ry // MODEL_PANEL_ROW_H
-                            hover = row if 0 <= row < len(AVAILABLE_MODELS) else None
-                        else:
-                            hover = None
-                        if hover != state.model_hover_row:
-                            state.model_hover_row = hover
-                            from siqspeak.overlay.panels import _show_panel_window
-                            buf, pw, ph = _render_model_panel(state)
-                            _show_panel_window(state, state.model_panel_hwnd, buf, pw, ph)
-
-                        # Auth button hover tracking
-                        if state.needs_hf_auth and not state.hf_auth_success:
-                            from siqspeak.overlay.panels.model_panel import AUTH_BTN_Y, AUTH_BUTTONS
-                            rx = pt.x - rect.left
-                            ry_abs = pt.y - rect.top
-                            new_hover = ""
-                            if AUTH_BTN_Y <= ry_abs <= AUTH_BTN_Y + 32:
-                                for bi, btn in enumerate(AUTH_BUTTONS):
-                                    if btn["x1"] <= rx <= btn["x2"]:
-                                        new_hover = f"btn{bi}"
-                                        break
-                            if new_hover != state.hf_token_input:
-                                state.hf_token_input = new_hover
-                                from siqspeak.overlay.panels import _show_panel_window
-                                buf2, pw2, ph2 = _render_model_panel(state)
-                                _show_panel_window(state, state.model_panel_hwnd, buf2, pw2, ph2)
                 elif state.active_panel == "settings":
                     _handle_settings_click(state)
+                    # Re-render only when settings state changes (e.g. a click or
+                    # background pull progress) — never on plain pointer movement.
+                    sig = _settings_render_signature(state)
+                    if sig != settings_sig:
+                        settings_sig = sig
+                        buf, pw, ph = _render_settings_panel(state)
+                        if ph != settings_h:
+                            # Height changed (mic expand/collapse) — re-anchor.
+                            settings_h = ph
+                            from siqspeak.overlay.panels import _show_panel_window
+                            _show_panel_window(state, state.settings_panel_hwnd, buf, pw, ph)
+                        else:
+                            _update_panel_content(state.settings_panel_hwnd, buf, pw, ph)
 
                 # Mouse wheel scroll for log panel
                 if state.wheel_delta != 0:
@@ -376,6 +362,53 @@ def message_loop(state: AppState) -> None:
 
 
 
+def _foreground_window_title() -> str:
+    """Return the current foreground window title (empty when unavailable)."""
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return ""
+    length = user32.GetWindowTextLengthW(hwnd)
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    return buf.value
+
+
+def _install_enhancer(state: AppState) -> None:
+    """Expose a typed enhancement boundary on the state.
+
+    The boundary is called from the transcription worker. The workspace root and
+    skill catalog are resolved *per request* so auto-detection reflects the editor
+    focused at dictation time and a manually picked workspace takes effect without
+    a restart. The loopback Ollama client is constructed once (it is stateless).
+    Any setup failure leaves ``enhance_prompt`` unset, which safely disables
+    enhancement.
+    """
+    try:
+        client = OllamaClient()
+    except Exception:
+        log.exception("Prompt enhancement setup failed — enhancement disabled")
+        return
+
+    def enhance_prompt(raw_text: str) -> EnhancementResult:
+        try:
+            workspace = resolve_workspace(state.workspace_override, _foreground_window_title())
+            state.workspace_detected_root = str(workspace) if workspace else None
+            catalog = discover_skills(workspace, Path.home())
+        except Exception:
+            log.exception("Skill discovery failed — enhancing without a catalog")
+            catalog = ()
+        return enhance_request(
+            raw_text,
+            enabled=state.enhancement_enabled,
+            model=state.enhancement_model,
+            client=client,
+            catalog=catalog,
+        )
+
+    state.enhance_prompt = enhance_prompt
+
+
 def main() -> None:
     """Application entry point."""
     # Single-instance guard: prevent multiple copies running at the same time.
@@ -404,6 +437,12 @@ def main() -> None:
     state.pill_user_x = cfg.get("pill_x")
     state.pill_user_y = cfg.get("pill_y")
     state.mic_device = cfg.get("mic_device")
+    state.enhancement_enabled = cfg.get("enhancement_enabled", False)
+    state.enhancement_model = cfg.get("enhancement_model", ENHANCEMENT_MODEL)
+    state.workspace_override = cfg.get("workspace_override")
+
+    # Wire the optional local prompt-enhancement boundary once at startup
+    _install_enhancer(state)
 
     # Load persisted transcription log
     _load_log(state)

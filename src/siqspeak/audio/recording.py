@@ -141,10 +141,11 @@ def start_recording(state: AppState) -> None:
         if state.silence_count == silence_needed:
             # Silence threshold just hit -- dispatch accumulated speech audio
             end_idx = len(state.audio_chunks) - silence_needed  # exclude trailing silence
-            if end_idx > state.transcribed_idx:
+            stream_queue = state.stream_queue
+            if end_idx > state.transcribed_idx and stream_queue is not None:
                 segment = state.audio_chunks[state.transcribed_idx:end_idx]
                 state.transcribed_idx = end_idx
-                state.stream_queue.put(("segment", segment))
+                stream_queue.put(("segment", segment))
             state.silence_count = 0  # reset so it doesn't re-trigger each tick
 
     mic_kwargs: dict = dict(
@@ -223,7 +224,9 @@ def stop_and_enqueue(state: AppState) -> None:
         return
 
     set_state(state, "transcribing")
-    state.transcription_queue.put((audio, target_hwnd))
+    transcription_queue = state.transcription_queue
+    if transcription_queue is not None:
+        transcription_queue.put((audio, target_hwnd))
 
 
 def _transcribe_and_type(
@@ -245,13 +248,27 @@ def _transcribe_and_type(
         suppress_blank=True,
     )
     seg_texts = [seg.text.strip() for seg in segments if seg.text.strip()]
-    text = " ".join(seg_texts).strip()
+    raw_text = " ".join(seg_texts).strip()
     elapsed = time.perf_counter() - t0
-    log.info("TRANSCRIBE %.3fs -> %s", elapsed, text)
+    log.info("TRANSCRIBE %.3fs -> %d chars", elapsed, len(raw_text))
 
-    if text:
+    if raw_text:
+        # Optional local prompt enhancement — always lossless (falls back to raw).
+        final_text = raw_text
+        enhanced = False
+        selected_skills: tuple[str, ...] = ()
+        if state.enhancement_enabled and state.enhance_prompt is not None:
+            set_state(state, "enhancing")
+            result = state.enhance_prompt(raw_text)
+            final_text = result.final_text
+            enhanced = result.enhanced
+            selected_skills = result.selected_skills
+
         entry = {
-            "text": text,
+            "text": final_text,
+            "raw_text": raw_text,
+            "enhanced": enhanced,
+            "selected_skills": list(selected_skills),
             "timestamp": time.strftime("%H:%M:%S"),
             "time_epoch": time.time(),
         }
@@ -269,20 +286,23 @@ def _transcribe_and_type(
             except Exception:
                 log.exception("Failed to restore foreground window")
             try:
-                type_text(text)
+                type_text(final_text)
             except Exception:
                 log.exception("Failed to type text")
-            log.info("TYPED: %s", text)
+            log.info("TYPED %d chars (enhanced=%s)", len(final_text), enhanced)
         elif not target_hwnd:
-            log.info("SKIP TYPE (no valid target window): %s", text)
+            log.info("SKIP TYPE (no valid target window): %d chars", len(final_text))
         else:
-            log.info("SKIP TYPE (new recording in progress): %s", text)
+            log.info("SKIP TYPE (new recording in progress): %d chars", len(final_text))
 
 
 def transcription_worker_loop(state: AppState) -> None:
     """Background worker — dequeues audio jobs and runs transcription + typing."""
+    transcription_queue = state.transcription_queue
+    if transcription_queue is None:
+        return
     while True:
-        job = state.transcription_queue.get()
+        job = transcription_queue.get()
         if job is None:
             break  # Shutdown signal
         audio, target_hwnd = job
@@ -296,6 +316,7 @@ def transcription_worker_loop(state: AppState) -> None:
 
 def _stop_and_transcribe_streaming(state: AppState) -> None:
     """Flush remaining audio through worker, then tear down."""
+    stream_queue = state.stream_queue
     try:
         remaining = state.audio_chunks[state.transcribed_idx:]
         if remaining:
@@ -303,17 +324,18 @@ def _stop_and_transcribe_streaming(state: AppState) -> None:
             duration = len(audio) / SAMPLE_RATE
             log.info("STREAM FLUSH -- %.1fs remaining", duration)
 
-            if duration >= MIN_CHUNK_DURATION:
+            if duration >= MIN_CHUNK_DURATION and stream_queue is not None:
                 set_state(state, "transcribing")
                 done_event = threading.Event()
-                state.stream_queue.put(("flush", (remaining, done_event)))
+                stream_queue.put(("flush", (remaining, done_event)))
                 done_event.wait(timeout=30.0)
             else:
                 log.info("STREAM FLUSH: too short, skip")
         else:
             log.info("STREAM FLUSH: nothing remaining")
 
-        state.stream_queue.put(("stop", None))
+        if stream_queue is not None:
+            stream_queue.put(("stop", None))
         if state.stream_worker:
             state.stream_worker.join(timeout=5.0)
 
@@ -329,7 +351,7 @@ def _stop_and_transcribe_streaming(state: AppState) -> None:
             if len(state.transcription_log) > LOG_IN_MEMORY_CAP:
                 state.transcription_log[:] = state.transcription_log[-LOG_IN_MEMORY_CAP:]
             _save_log_entry(state, entry)
-            log.info("STREAM TYPED: %s", full_text)
+            log.info("STREAM TYPED %d chars", len(full_text))
 
     except Exception:
         log.exception("Streaming flush failed")

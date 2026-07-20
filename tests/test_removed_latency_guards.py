@@ -36,6 +36,19 @@ ROOT = Path(__file__).resolve().parents[1]
     ("src/siqspeak/interaction/click_handlers.py", ("device_settings", "GPU", "has_cuda")),
     ("src/siqspeak/overlay/panels/settings_panel.py", ("Use GPU", "has_cuda")),
     ("setup.bat", ("nvidia-smi", "nvidia-cublas-cu12", "nvidia-cudnn-cu12", "GPU acceleration")),
+    # Removed HuggingFace token/auth flow (Task 9).
+    (
+        "src/siqspeak/state.py",
+        ("needs_hf_auth", "hf_username", "hf_token_input", "hf_pending_model", "hf_auth"),
+    ),
+    (
+        "src/siqspeak/app.py",
+        ("needs_hf_auth", "hf_auth", "AUTH_BTN_Y", "AUTH_BUTTONS"),
+    ),
+    (
+        "src/siqspeak/interaction/click_handlers.py",
+        ("hf_auth", "_handle_hf_auth_click", "needs_hf_auth", "validate_token"),
+    ),
 ])
 def test_removed_latency_feature_strings_stay_removed(relative_path: str, forbidden: tuple[str, ...]) -> None:
     text = (ROOT / relative_path).read_text(encoding="utf-8")

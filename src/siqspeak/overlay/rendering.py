@@ -68,7 +68,10 @@ _idle_bg = _make_pill_bg(IDLE_W, IDLE_H, _idle_mask)
 # Frame builders
 # ---------------------------------------------------------------------------
 
-DOT_COLOR = {"recording": CYAN, "transcribing": WHITE}
+# Enhancing uses a restrained blue-cyan, distinct from recording (CYAN) and
+# transcribing (WHITE), to signal the optional local prompt-enhancement pass.
+ENHANCING_COLOR = (70, 170, 255)
+DOT_COLOR = {"recording": CYAN, "transcribing": WHITE, "enhancing": ENHANCING_COLOR}
 
 
 def _build_idle_frame_uncached(hover_zone: int | None = None) -> np.ndarray:
@@ -181,6 +184,12 @@ def _render_frame(state: AppState, current_state: str, phase: float) -> np.ndarr
             # Vertical displacement: traveling sine wave scaled by audio level
             amplitude = dot_level * 9.0
             cy += amplitude * math.sin(phase * 2.5 + i * 0.9)
+        elif current_state == "enhancing":
+            # Restrained slow pulse — gentle amplitude, calm "thinking" cadence
+            wave = (math.sin(phase * 1.6 + i * 0.5) + 1) / 2
+            scale = 0.5 + wave * 0.6
+            bright = 0.4 + wave * 0.45
+            cy += 2.5 * math.sin(phase * 1.6 + i * 0.6)
         else:
             wave = (math.sin(phase * 3.0 + i * 0.6) + 1) / 2
             scale = 0.5 + wave * 1.2

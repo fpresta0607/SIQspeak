@@ -13,8 +13,11 @@ log = logging.getLogger("siqspeak")
 
 def _transcription_worker(state: AppState) -> None:
     """Background thread: pull audio segments from queue, transcribe, type."""
+    stream_queue = state.stream_queue
+    if stream_queue is None:
+        return
     while True:
-        item = state.stream_queue.get()
+        item = stream_queue.get()
         kind, payload = item
 
         if kind == "stop":
@@ -43,7 +46,7 @@ def _transcription_worker(state: AppState) -> None:
             )
             text = " ".join(seg.text.strip() for seg in segments if seg.text.strip()).strip()
             elapsed = time.perf_counter() - t0
-            log.info("STREAM TRANSCRIBE %.3fs -> %s", elapsed, text)
+            log.info("STREAM TRANSCRIBE %.3fs -> %d chars", elapsed, len(text))
 
             if text:
                 state.stream_texts.append(text)

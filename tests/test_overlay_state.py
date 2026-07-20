@@ -1,11 +1,8 @@
 """Tests for overlay state transition architecture (two-window + PostThreadMessageW)."""
 from __future__ import annotations
 
-import pytest
-
 from siqspeak.config import STATE_CODE, STATE_NAME, WM_APP_STATE
 from siqspeak.state import AppState
-
 
 # ---------------------------------------------------------------------------
 # Config constants
@@ -18,14 +15,32 @@ def test_state_code_roundtrip():
 
 
 def test_state_code_covers_all_states():
-    expected = {"idle", "recording", "transcribing"}
+    expected = {"idle", "recording", "transcribing", "enhancing"}
     assert set(STATE_CODE.keys()) == expected
     assert set(STATE_NAME.values()) == expected
 
 
 def test_wm_app_state_is_in_app_range():
-    """WM_APP range is 0x8000–0xBFFF; our custom message must be in range."""
+    """WM_APP range is 0x8000-0xBFFF; our custom message must be in range."""
     assert 0x8000 <= WM_APP_STATE <= 0xBFFF
+
+
+# ---------------------------------------------------------------------------
+# Enhancing render path
+# ---------------------------------------------------------------------------
+
+def test_render_frame_supports_enhancing():
+    """The active pill renders a distinct enhancing animation without crashing."""
+    from siqspeak.config import ACTIVE_H, ACTIVE_W
+    from siqspeak.overlay.rendering import DOT_COLOR, _render_frame
+
+    assert "enhancing" in DOT_COLOR
+    # Distinct from recording/transcribing colors
+    assert DOT_COLOR["enhancing"] != DOT_COLOR["recording"]
+    assert DOT_COLOR["enhancing"] != DOT_COLOR["transcribing"]
+
+    buf = _render_frame(AppState(), "enhancing", 0.5)
+    assert buf.shape == (ACTIVE_H, ACTIVE_W, 4)
 
 
 # ---------------------------------------------------------------------------

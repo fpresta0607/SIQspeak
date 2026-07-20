@@ -47,8 +47,12 @@ LOG_FILE_PATH = os.path.join(SCRIPT_DIR, "transcriptions.jsonl")
 # ---------------------------------------------------------------------------
 # Model / transcription config
 # ---------------------------------------------------------------------------
-MODEL_NAME = "tiny"
+MODEL_NAME = "base.en"
 SAMPLE_RATE = 16000
+
+# Local prompt enhancement (optional, opt-in)
+ENHANCEMENT_MODEL = "qwen3.5:2b"
+ENHANCEMENT_MODELS = ("qwen3.5:2b", "qwen3.5:4b")
 
 # Streaming transcription (type-as-you-talk)
 STREAM_MODE = False                 # opt-in; toggled via settings panel
@@ -94,7 +98,7 @@ _ICON_GEAR_B64 = "iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAADAUlEQVR4nO2d24
 def _load_icon(b64: str, size: tuple[int, int], color: tuple[int, int, int]) -> Image.Image:
     """Decode a base64 PNG, resize it, and tint to the given RGB color (cached)."""
     data = base64.b64decode(b64)
-    img = Image.open(io.BytesIO(data)).convert("RGBA").resize(size, Image.LANCZOS)
+    img = Image.open(io.BytesIO(data)).convert("RGBA").resize(size, Image.Resampling.LANCZOS)
     # Tint: use source alpha, replace RGB with target color
     _r, _g, _b, a = img.split()
     img = Image.merge("RGBA", (
@@ -135,23 +139,40 @@ LOG_FILE_MAX_ENTRIES = 500
 # Model selector panel
 MODEL_PANEL_ROW_H = 62
 MODEL_PANEL_HEADER_H = 52
-AVAILABLE_MODELS = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
-MODEL_SIZES_MB = {
-    "tiny": 75, "base": 141, "small": 464,
-    "medium": 1460, "large-v2": 2947, "large-v3": 2948,
-}
+SPEECH_MODELS = (
+    {"name": "tiny.en", "tier": "Fastest", "size_mb": 75},
+    {"name": "base.en", "tier": "Default", "size_mb": 141},
+    {"name": "small.en", "tier": "Balanced", "size_mb": 464},
+    {"name": "distil-medium.en", "tier": "High Quality", "size_mb": 755},
+    {"name": "distil-large-v3.5", "tier": "Best Quality", "size_mb": 1446},
+)
+AVAILABLE_MODELS = tuple(model["name"] for model in SPEECH_MODELS)
+MODEL_SIZES_MB = {model["name"]: model["size_mb"] for model in SPEECH_MODELS}
 
 # Settings panel
 SETTINGS_HEADER_H = 52
 
 # Log panel rendering
 LOG_HEADER_H = 72
-LOG_COPY_BTN_W = 48
-LOG_COPY_VISUAL_W = 38    # btn_hw * 2 — actual rendered button width
-LOG_COPY_BTN_HH = 18      # half-height of visual button
-LOG_COPY_HOVER_PAD = 5    # comfort padding around button for hover/click
-LOG_TEXT_LEFT = 90
-LOG_LINE_H = 28
+LOG_LINE_H = 26
+
+# History cards (stable, Fluent-inspired — no hover state)
+LOG_CARD_MARGIN_X = 16    # card left/right inset from panel edge
+LOG_CARD_PAD_X = 14       # card inner horizontal padding
+LOG_CARD_PAD_Y = 12       # card inner vertical padding
+LOG_CARD_GAP = 12         # vertical space between cards
+LOG_CARD_RADIUS = 10
+LOG_META_H = 20           # metadata row height (timestamp + Enhanced badge)
+LOG_META_GAP = 6          # gap between primary text and metadata row
+LOG_COPY_BTN_W = 40       # copy hit-column width at the card's right edge
+
+LOG_CARD_FILL = (26, 33, 52)      # subtle raised card fill over PILL_BG
+LOG_CARD_BORDER = (48, 58, 84)    # hairline card border
+LOG_BADGE_FILL = (16, 46, 54)     # Enhanced badge background (cyan-tinted)
+LOG_COPY_IDLE = (110, 120, 140)   # low-contrast always-visible copy icon
+LOG_COPIED_GREEN = (40, 220, 80)
+
+COPY_CONFIRM_SECONDS = 1.5
 
 # Dot color mapping (recording/transcribing)
 DOT_COLOR = {"recording": CYAN, "transcribing": WHITE}
@@ -171,8 +192,8 @@ WM_TIMER = 0x0113
 WM_APP_STATE = 0x8002  # custom message for overlay state transitions
 
 # State codes for WM_APP_STATE wParam (PostThreadMessageW)
-STATE_CODE: dict[str, int] = {"idle": 0, "recording": 1, "transcribing": 2}
-STATE_NAME: dict[int, str] = {0: "idle", 1: "recording", 2: "transcribing"}
+STATE_CODE: dict[str, int] = {"idle": 0, "recording": 1, "transcribing": 2, "enhancing": 3}
+STATE_NAME: dict[int, str] = {0: "idle", 1: "recording", 2: "transcribing", 3: "enhancing"}
 
 
 # ---------------------------------------------------------------------------
@@ -231,4 +252,7 @@ def save_state_config(state: AppState) -> None:
         "pill_x": state.pill_user_x,
         "pill_y": state.pill_user_y,
         "mic_device": state.mic_device,
+        "enhancement_enabled": state.enhancement_enabled,
+        "enhancement_model": state.enhancement_model,
+        "workspace_override": state.workspace_override,
     })

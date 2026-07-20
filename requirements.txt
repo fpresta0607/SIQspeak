@@ -6,3 +6,4 @@ numpy
 pystray
 pillow
 pyperclip
+pyyaml

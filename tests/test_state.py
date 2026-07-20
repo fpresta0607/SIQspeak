@@ -31,3 +31,10 @@ def test_independent_instances():
     b = AppState()
     a.transcription_log.append({"text": "test"})
     assert len(b.transcription_log) == 0
+
+
+def test_enhancement_defaults_are_memory_friendly():
+    state = AppState()
+    assert state.enhancement_enabled is False
+    assert state.enhancement_model == "qwen3.5:2b"
+    assert state.workspace_override is None

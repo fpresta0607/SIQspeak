@@ -60,111 +60,54 @@ echo   [OK] Dependencies installed.
 echo.
 
 :: ------------------------------------------------------------------
-:: 4. HuggingFace Sign-In
+:: 4. Download default speech model
 :: ------------------------------------------------------------------
-echo   ------------------------------------------
-echo    HuggingFace Sign-In
-echo   ------------------------------------------
-echo.
-echo   SIQspeak downloads AI speech models from HuggingFace.
-echo   A free account is needed to download models.
-echo.
-
-:: Check existing token
-.venv\Scripts\python.exe scripts\hf_check.py 2>nul
-if !errorlevel! equ 0 goto :hf_done
-
-:hf_auth_start
-echo.
-set /p HAS_ACCOUNT="   Do you have a HuggingFace account? [Y/N]: "
-if /i "!HAS_ACCOUNT!"=="N" goto :hf_signup
-goto :hf_get_token
-
-:hf_signup
-echo.
-echo   No problem -- we will create one now. It is free.
-echo.
-echo   [..] Opening HuggingFace signup in your browser...
-echo.
-echo       - Pick a username and password
-echo       - Verify your email if prompted
-echo       - Then come back to this window
-echo.
-start "" "https://huggingface.co/join"
-echo   Press any key after you have created your account...
-pause >nul
-echo.
-
-:hf_get_token
-echo.
-echo   Now we need an Access Token so SIQspeak can download models.
-echo.
-echo   Your browser will open to the HuggingFace token page.
-echo   Here is exactly what to do:
-echo.
-echo       STEP 1: Log in if prompted
-echo.
-echo       STEP 2: You will see a "Create a new token" form
-echo               - Type a name like "SIQspeak" in the Token name box
-echo               - Under Permissions, select "Read"
-echo                 That is all SIQspeak needs
-echo.
-echo       STEP 3: Click the "Create token" button at the bottom
-echo.
-echo       STEP 4: Your new token appears -- it starts with hf_
-echo               Click the COPY button next to it
-echo.
-echo       STEP 5: Come back to this window and paste it below
-echo               Tip: right-click in this window to paste
-echo.
-echo   Opening browser now...
-echo.
-start "" "https://huggingface.co/settings/tokens/new?tokenName=SIQspeak&globalPermissions=read"
-
-echo.
-set /p HF_TOKEN="   Paste your token here: "
-
-if "!HF_TOKEN!"=="" goto :hf_empty_token
-
-:: Validate using external script
-.venv\Scripts\python.exe scripts\hf_login.py "!HF_TOKEN!"
-if !errorlevel! equ 0 goto :hf_done
-goto :hf_retry
-
-:hf_empty_token
-echo   [!] No token entered.
-
-:hf_retry
-echo.
-set /p RETRY="   Try again? [Y/N]: "
-if /i "!RETRY!"=="Y" goto :hf_auth_start
-
-echo.
-echo   [--] Skipping sign-in. Model downloads may fail.
-echo       Run setup.bat again later to sign in.
-echo.
-
-:hf_done
-echo.
-
-:: ------------------------------------------------------------------
-:: 5. Download default model
-:: ------------------------------------------------------------------
-echo   [..] Downloading default speech model -- tiny, about 75 MB
+echo   [..] Downloading default speech model -- base.en, about 141 MB
 echo       This may take a minute.
 echo.
 
-.venv\Scripts\python.exe scripts\download_model.py tiny
-if !errorlevel! equ 0 goto :model_done
-
-echo.
-echo   [..] Primary download failed. Trying alternative...
-.venv\Scripts\python.exe -c "import os,urllib.request,sys;d=os.path.join(os.path.expanduser('~'),'.cache','huggingface','hub','models--Systran--faster-whisper-tiny','snapshots','main');os.makedirs(d,exist_ok=True);[urllib.request.urlretrieve('https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/'+f,os.path.join(d,f)) or print('   [OK] '+f) for f in ['model.bin','config.json','tokenizer.json','preprocessor_config.json','vocabulary.json','vocabulary.txt'] if not os.path.exists(os.path.join(d,f))]"
+.venv\Scripts\python.exe scripts\download_model.py base.en
 if !errorlevel! equ 0 goto :model_done
 
 echo   [!] Model download failed. SIQspeak will retry on first launch.
 
 :model_done
+echo.
+
+:: ------------------------------------------------------------------
+:: 5. Optional local prompt enhancer (Ollama)
+:: ------------------------------------------------------------------
+echo   ------------------------------------------
+echo    Optional local prompt enhancer
+echo   ------------------------------------------
+echo.
+echo   SIQspeak can rewrite spoken requests into structured coding prompts
+echo   using a local model. This runs entirely on your machine and is optional.
+echo.
+set /p ENHANCER="   Download the optional local prompt enhancer (~2.7 GB)? [Y/N]: "
+if /i "!ENHANCER!"=="Y" goto :enhancer_yes
+echo   [--] Skipped local prompt enhancer.
+goto :enhancer_done
+
+:enhancer_yes
+where ollama >nul 2>&1
+if !errorlevel! neq 0 goto :enhancer_no_ollama
+echo   [..] Downloading local prompt enhancer -- qwen3.5:2b, about 2.7 GB
+echo       This may take several minutes.
+echo.
+ollama pull qwen3.5:2b
+if !errorlevel! equ 0 goto :enhancer_done
+echo   [!] Enhancer download failed. Rerun setup.bat to try again.
+goto :enhancer_done
+
+:enhancer_no_ollama
+echo   [!] Ollama is not installed.
+echo       The local prompt enhancer needs Ollama for Windows.
+echo       Opening the official download page...
+start "" "https://ollama.com/download"
+echo       After installing Ollama, rerun setup.bat to download the enhancer.
+
+:enhancer_done
 echo.
 
 :: ------------------------------------------------------------------
