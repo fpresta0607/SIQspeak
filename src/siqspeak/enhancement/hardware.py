@@ -3,8 +3,10 @@
 Two independent signals: total physical RAM (ctypes ``GlobalMemoryStatusEx``)
 and NVIDIA VRAM (``nvidia-smi``, absent on most machines). A model may run on
 either, so :func:`can_run_model` compares its requirement against the larger of
-the two. Every OS call is guarded — a missing driver or a hung probe degrades to
-"unknown", never an exception.
+the two. The two probes fail differently: a missing NVIDIA driver or a hung
+``nvidia-smi`` returns ``None`` (unknown), while a failed RAM probe leaves the
+struct zeroed and returns ``0.0`` — fail-closed, so the download is blocked
+rather than allowed on unknown hardware.
 """
 from __future__ import annotations
 

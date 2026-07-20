@@ -261,7 +261,13 @@ def _transcribe_and_type(
         if state.enhancement_enabled and state.enhance_prompt is not None:
             set_state(state, "enhancing")
             # Resolve workspace from the window dictated into, not the live foreground.
-            result = state.enhance_prompt(raw_text, window_title(target_hwnd))
+            # Title resolution runs at a boundary — a failure here must never sink
+            # the whole block, or the raw transcript would be lost (never logged/typed).
+            try:
+                title = window_title(target_hwnd)
+            except Exception:
+                title = ""
+            result = state.enhance_prompt(raw_text, title)
             final_text = result.final_text
             enhanced = result.enhanced
             selected_skills = result.selected_skills

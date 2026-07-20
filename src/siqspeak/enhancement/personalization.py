@@ -18,6 +18,8 @@ from pathlib import Path
 
 MAX_SESSION_FILES = 20
 MAX_LINES_PER_FILE = 2000
+MAX_LINE_BYTES = 20000  # skip pathologically long JSONL lines before parsing
+MAX_PLAN_FILES = 10     # cap the plan glob for consistency with context.py
 MAX_POOL_SIZE = 300
 MAX_PLAN_BYTES = 8 * 1024
 
@@ -28,6 +30,8 @@ _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _WORD_TOKEN_RE = re.compile(r"[a-z0-9]+")
 _GOAL_RE = re.compile(r"\*\*goal:?\*\*\s*", re.IGNORECASE)
 _CODE_MARKERS = ("```", "{", "}", ";", "()", "=>", "::")
+# Drop candidates that look like leaked secrets so they never enter the prompt.
+_SECRET_RE = re.compile(r"AKIA|sk-|ghp_|xox[baprs]-|Bearer |-----BEGIN")
 
 
 def select_style_examples(
@@ -80,6 +84,8 @@ def _iter_session_texts(home: Path | None) -> Iterator[str]:
                 for line_number, line in enumerate(handle):
                     if line_number >= MAX_LINES_PER_FILE:
                         break
+                    if len(line) > MAX_LINE_BYTES:
+                        continue
                     text = _user_text_from_line(line)
                     if text:
                         yield text
@@ -93,7 +99,11 @@ def _session_files(home: Path | None) -> list[Path]:
     projects = Path(home) / ".claude" / "projects"
     if not projects.is_dir():
         return []
-    files = [path for path in projects.rglob("*.jsonl") if path.is_file()]
+    # Global home files are trusted for location; skip symlinks only.
+    files = [
+        path for path in projects.rglob("*.jsonl")
+        if path.is_file() and not path.is_symlink()
+    ]
     files.sort(key=lambda path: -path.stat().st_mtime)
     return files[:MAX_SESSION_FILES]
 
@@ -141,13 +151,29 @@ def _content_text(content: object) -> str | None:
 def _iter_plan_texts(workspace: Path | None) -> Iterator[str]:
     if workspace is None:
         return
-    plans_dir = Path(workspace) / "docs" / "plans"
+    root = Path(workspace)
+    plans_dir = root / "docs" / "plans"
     if not plans_dir.is_dir():
         return
-    for path in sorted(plans_dir.glob("*.md")):
+    plans = sorted(plans_dir.glob("*.md"), key=lambda path: -path.stat().st_mtime)
+    for path in plans[:MAX_PLAN_FILES]:
+        if not _is_contained(path, root):
+            continue
         objective = _plan_objective(path)
         if objective:
             yield objective
+
+
+def _is_contained(path: Path, root: Path) -> bool:
+    """Reject symlinks and paths whose resolved target escapes ``root``."""
+    try:
+        if path.is_symlink():
+            return False
+        resolved = path.resolve()
+        root_resolved = root.resolve()
+        return resolved == root_resolved or root_resolved in resolved.parents
+    except OSError:
+        return False
 
 
 def _plan_objective(path: Path) -> str | None:
@@ -175,6 +201,8 @@ def _normalize(text: str) -> str | None:
     if not MIN_EXAMPLE_CHARS <= len(collapsed) <= MAX_EXAMPLE_CHARS:
         return None
     if any(marker in collapsed for marker in _CODE_MARKERS):
+        return None
+    if _SECRET_RE.search(collapsed):
         return None
     return collapsed
 

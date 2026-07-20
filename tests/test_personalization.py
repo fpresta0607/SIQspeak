@@ -4,13 +4,22 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from siqspeak.enhancement.personalization import select_style_examples
+import pytest
+
+from siqspeak.enhancement.personalization import _is_contained, select_style_examples
 
 
 def _write_session(home: Path, name: str, lines: list[str]) -> None:
     project_dir = home / ".claude" / "projects" / "proj"
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / name).write_text("\n".join(lines), encoding="utf-8")
+
+
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not permitted in this environment")
 
 
 def _user_line(content: object) -> str:
@@ -157,6 +166,43 @@ def test_plan_objective_goal_line_is_included(tmp_path: Path) -> None:
     result = select_style_examples("streaming transcription", None, tmp_path)
 
     assert result == ("ship the streaming transcription pipeline",)
+
+
+def test_secret_like_lines_are_excluded(tmp_path: Path) -> None:
+    # A candidate that looks like a leaked secret must never enter the style pool.
+    _write_session(
+        tmp_path,
+        "s.jsonl",
+        [
+            _user_line("here is my key AKIA1234567890ABCDEF for the deploy step"),
+            _user_line("use token ghp_abcdefghijklmnopqrstuvwxyz0123456789 to push"),
+            _user_line("set the Authorization to Bearer eymytokenvaluehereok now"),
+            _user_line("please add retry logic to the upload flow reliably"),
+        ],
+    )
+
+    result = select_style_examples("retry upload", tmp_path, None, limit=5)
+
+    assert result == ("please add retry logic to the upload flow reliably",)
+
+
+def test_is_contained_rejects_out_of_root_paths(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    assert _is_contained(workspace / "docs" / "plans" / "a.md", workspace) is True
+    assert _is_contained(tmp_path / "outside.md", workspace) is False
+
+
+def test_symlinked_plan_is_skipped(tmp_path: Path) -> None:
+    # A plan symlink escaping the workspace must not be read into the style pool.
+    workspace = tmp_path / "ws"
+    plans_dir = workspace / "docs" / "plans"
+    plans_dir.mkdir(parents=True)
+    secret = tmp_path / "outside.md"
+    secret.write_text("**Goal:** exfiltrate the entire secret plan text here", encoding="utf-8")
+    _symlink_or_skip(plans_dir / "a.md", secret)
+
+    assert select_style_examples("exfiltrate", None, workspace) == ()
 
 
 def test_plan_first_paragraph_used_when_no_goal(tmp_path: Path) -> None:

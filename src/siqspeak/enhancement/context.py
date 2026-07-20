@@ -36,8 +36,9 @@ def load_instruction_context(
     """
     sources: list[ContextSource] = []
     if workspace is not None:
+        root = Path(workspace)
         for filename in WORKSPACE_INSTRUCTION_FILES:
-            text = _read_bounded(Path(workspace) / filename)
+            text = _read_bounded(root / filename, root=root)
             if text is not None:
                 sources.append(ContextSource(label=filename, text=text))
     if home is not None:
@@ -61,8 +62,9 @@ def load_workspace_context(
     """
     sources = list(load_instruction_context(workspace, home))
     if workspace is not None:
-        for plan in _recent_plans(Path(workspace)):
-            text = _read_bounded(plan)
+        root = Path(workspace)
+        for plan in _recent_plans(root):
+            text = _read_bounded(plan, root=root)
             if text is not None:
                 sources.append(ContextSource(label=f"docs/plans/{plan.name}", text=text))
     return tuple(sources)
@@ -72,12 +74,36 @@ def _recent_plans(workspace: Path) -> list[Path]:
     plans_dir = workspace / "docs" / "plans"
     if not plans_dir.is_dir():
         return []
-    plans = [path for path in plans_dir.glob("*.md") if path.is_file()]
+    plans = [
+        path for path in plans_dir.glob("*.md")
+        if path.is_file() and not path.is_symlink()
+    ]
     plans.sort(key=lambda path: (-path.stat().st_mtime, path.name))
     return plans[:MAX_PLAN_SOURCES]
 
 
-def _read_bounded(path: Path) -> str | None:
+def _is_within(path: Path, root: Path | None) -> bool:
+    """Reject symlinks; for workspace files require containment under ``root``.
+
+    Guards against symlinks/junctions escaping the intended root. Global files
+    (``root is None``) only need the symlink check — home is trusted.
+    """
+    try:
+        if path.is_symlink():
+            return False
+        if root is not None:
+            resolved = path.resolve()
+            root_resolved = root.resolve()
+            if resolved != root_resolved and root_resolved not in resolved.parents:
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def _read_bounded(path: Path, root: Path | None = None) -> str | None:
+    if not _is_within(path, root):
+        return None
     if not path.is_file():
         return None
     try:

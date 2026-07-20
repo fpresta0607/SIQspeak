@@ -117,6 +117,34 @@ def test_focus_restoration_uses_original_target(monkeypatch) -> None:
     assert ("focus", 999) in events
 
 
+def test_window_title_failure_still_logs_and_types(monkeypatch) -> None:
+    # A window_title() failure must not sink the block: the raw transcript is
+    # still enhanced (with an empty title), logged, and typed.
+    events = _instrument(monkeypatch)
+
+    def _boom(_hwnd):
+        raise RuntimeError("GetWindowTextW failed")
+
+    monkeypatch.setattr(recording, "window_title", _boom)
+    seen_titles: list[str] = []
+    state = AppState()
+    state.model = _FakeModel("raw words")
+    state.enhancement_enabled = True
+
+    def _enhance(raw: str, title: str) -> EnhancementResult:
+        seen_titles.append(title)
+        return EnhancementResult(raw, "FINAL " + raw, (), True)
+
+    state.enhance_prompt = _enhance
+
+    recording._transcribe_and_type(state, np.zeros(16000, dtype=np.float32), target_hwnd=321)
+
+    # Title resolution failed -> empty string handed to the enhancer.
+    assert seen_titles == [""]
+    assert ("type", "FINAL raw words") in events
+    assert state.transcription_log[-1]["raw_text"] == "raw words"
+
+
 def test_new_recording_suppresses_typing(monkeypatch) -> None:
     events = _instrument(monkeypatch)
     state = AppState()

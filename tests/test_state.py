@@ -1,6 +1,7 @@
 """Tests for AppState dataclass."""
 from __future__ import annotations
 
+from siqspeak.config import ENHANCEMENT_MODEL
 from siqspeak.state import AppState
 
 
@@ -36,5 +37,6 @@ def test_independent_instances():
 def test_enhancement_defaults_are_memory_friendly():
     state = AppState()
     assert state.enhancement_enabled is False
-    assert state.enhancement_model == "qwen3.5:2b"
+    # There is one enhancer model; the default is tied to the single constant.
+    assert state.enhancement_model == ENHANCEMENT_MODEL
     assert state.workspace_override is None

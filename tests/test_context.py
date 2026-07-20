@@ -4,9 +4,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from siqspeak.enhancement.context import (
     MAX_CONTEXT_BYTES,
     ContextSource,
+    _is_within,
     load_instruction_context,
     load_workspace_context,
 )
@@ -14,6 +17,13 @@ from siqspeak.enhancement.context import (
 
 def _labels(sources: tuple[ContextSource, ...]) -> list[str]:
     return [source.label for source in sources]
+
+
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not permitted in this environment")
 
 
 def _write_global(home: Path, text: str) -> None:
@@ -160,6 +170,43 @@ def test_workspace_context_none_workspace_returns_only_global(tmp_path: Path) ->
 
 def test_workspace_context_no_plans_returns_only_instructions(tmp_path: Path) -> None:
     (tmp_path / "CLAUDE.md").write_text("claude", encoding="utf-8")
+
+    sources = load_workspace_context(workspace=tmp_path, home=None)
+
+    assert _labels(sources) == ["CLAUDE.md"]
+
+
+def test_is_within_rejects_out_of_root_paths(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    assert _is_within(workspace / "CLAUDE.md", workspace) is True
+    # A path resolving outside the workspace root is rejected (containment).
+    assert _is_within(tmp_path / "outside.md", workspace) is False
+    # Global files (root=None) skip containment but must be non-symlinks.
+    assert _is_within(tmp_path / "any.md", None) is True
+
+
+def test_symlinked_instruction_file_is_skipped(tmp_path: Path) -> None:
+    # A symlinked CLAUDE.md pointing outside the workspace must not be read —
+    # a malicious repo could otherwise redirect it to arbitrary files.
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    secret = tmp_path / "secret.md"
+    secret.write_text("out of root", encoding="utf-8")
+    _symlink_or_skip(workspace / "CLAUDE.md", secret)
+
+    sources = load_instruction_context(workspace=workspace, home=None)
+
+    assert sources == ()
+
+
+def test_symlinked_plan_file_is_skipped(tmp_path: Path) -> None:
+    (tmp_path / "CLAUDE.md").write_text("claude", encoding="utf-8")
+    plans_dir = tmp_path / "docs" / "plans"
+    plans_dir.mkdir(parents=True)
+    secret = tmp_path / "escape.md"
+    secret.write_text("out of root plan", encoding="utf-8")
+    _symlink_or_skip(plans_dir / "a.md", secret)
 
     sources = load_workspace_context(workspace=tmp_path, home=None)
 

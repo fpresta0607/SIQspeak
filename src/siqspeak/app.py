@@ -388,7 +388,7 @@ def _install_enhancer(state: AppState) -> None:
             context = load_workspace_context(workspace, Path.home())
             style = select_style_examples(raw_text, Path.home(), workspace, limit=3)
         except Exception:
-            log.exception("Skill discovery failed — enhancing without a catalog")
+            log.exception("context/skill/style discovery failed — enhancing without them")
             catalog = ()
             context = ()
             style = ()
@@ -434,7 +434,9 @@ def main() -> None:
     state.pill_user_y = cfg.get("pill_y")
     state.mic_device = cfg.get("mic_device")
     state.enhancement_enabled = cfg.get("enhancement_enabled", False)
-    state.enhancement_model = cfg.get("enhancement_model", ENHANCEMENT_MODEL)
+    # Single enhancer model — ignore any stale persisted value so an old config
+    # (e.g. a previously chosen model) can never override the one model in use.
+    state.enhancement_model = ENHANCEMENT_MODEL
     state.workspace_override = cfg.get("workspace_override")
 
     # Wire the optional local prompt-enhancement boundary once at startup
