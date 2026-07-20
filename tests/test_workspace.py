@@ -80,6 +80,48 @@ def test_empty_manual_override_falls_through_to_title(tmp_path: Path) -> None:
     assert resolve_workspace("", title) == root.resolve()
 
 
+def test_embedded_path_with_trailing_junk_resolves(tmp_path: Path) -> None:
+    root = tmp_path / "SIQspeak-main"
+    (root / ".git").mkdir(parents=True)
+    title = f"recording.py — {root} — Cursor"
+    assert resolve_workspace(None, title) == root.resolve()
+
+
+def test_embedded_nested_path_with_trailing_junk_ascends(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    nested = root / "src" / "audio"
+    nested.mkdir(parents=True)
+    (root / ".git").mkdir()
+    title = f"recording.py — {nested} — Cursor"
+    assert resolve_workspace(None, title) == root.resolve()
+
+
+def test_path_at_end_of_title_resolves(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".git").mkdir()
+    assert resolve_workspace(None, f"README.md — {root}") == root.resolve()
+
+
+def test_only_the_real_dir_among_fragments_wins(tmp_path: Path) -> None:
+    real = tmp_path / "repo"
+    real.mkdir()
+    (real / ".git").mkdir()
+    title = rf"editor — C:\nope\bogus — {real} — Cursor"
+    assert resolve_workspace(None, title) == real.resolve()
+
+
+def test_garbage_title_without_any_path_returns_none() -> None:
+    assert resolve_workspace(None, "untitled — no drive here — editor") is None
+
+
+def test_embedded_existing_dir_without_git_still_returns_none(tmp_path: Path) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    title = f"notes.txt — {plain} — Notepad"
+    assert resolve_workspace(None, title) is None
+
+
 def _make_repo(base: Path, *, nested: str = "src") -> tuple[Path, Path]:
     """Create a git repo under ``base`` and return (root, nested-dir)."""
     root = base / "repo"

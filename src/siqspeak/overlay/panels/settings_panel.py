@@ -127,12 +127,16 @@ def _model_requirement_label() -> str:
 
 
 def _workspace_display(state: AppState) -> tuple[str, str]:
-    """Return (status, path) for the workspace row."""
+    """Return (chip, path) for the workspace row.
+
+    Manual override wins ("Manual"); else the last auto-detected root ("Auto");
+    else a "Not detected yet" hint noting detection runs at dictation time.
+    """
     if state.workspace_override:
         return ("Manual", state.workspace_override)
     if state.workspace_detected_root:
         return ("Auto", state.workspace_detected_root)
-    return ("Auto", "Not detected")
+    return ("Auto", "Not detected yet · resolves from focused window")
 
 
 def _status_display(state: AppState) -> tuple[str, str | None]:
