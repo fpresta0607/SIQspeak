@@ -24,6 +24,7 @@ from siqspeak.config import (
 from siqspeak.state import AppState
 from siqspeak.tray import set_state
 from siqspeak.win32.text_input import focus_window, type_text
+from siqspeak.win32.window import window_title
 
 log = logging.getLogger("siqspeak")
 
@@ -259,7 +260,14 @@ def _transcribe_and_type(
         selected_skills: tuple[str, ...] = ()
         if state.enhancement_enabled and state.enhance_prompt is not None:
             set_state(state, "enhancing")
-            result = state.enhance_prompt(raw_text)
+            # Resolve workspace from the window dictated into, not the live foreground.
+            # Title resolution runs at a boundary — a failure here must never sink
+            # the whole block, or the raw transcript would be lost (never logged/typed).
+            try:
+                title = window_title(target_hwnd)
+            except Exception:
+                title = ""
+            result = state.enhance_prompt(raw_text, title)
             final_text = result.final_text
             enhanced = result.enhanced
             selected_skills = result.selected_skills

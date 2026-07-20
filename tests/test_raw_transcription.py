@@ -47,7 +47,7 @@ def test_enhancer_not_called_when_toggle_off(monkeypatch) -> None:
     state.enhancement_enabled = False
     called = False
 
-    def _spy(_raw: str):
+    def _spy(_raw: str, _title: str):
         nonlocal called
         called = True
         raise AssertionError("enhancer must not run when toggle is off")

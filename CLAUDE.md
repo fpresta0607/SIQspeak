@@ -119,7 +119,7 @@ Settings persist to `config.json` (gitignored). Transcription runs CPU-only with
 **Constants in `config.py`:**
 - `MODEL_NAME` — `"base.en"` default
 - `SPEECH_MODELS` — curated English catalog: `tiny.en`, `base.en`, `small.en`, `distil-medium.en`, `distil-large-v3.5` (name/tier/size). `AVAILABLE_MODELS` and `MODEL_SIZES_MB` derive from it.
-- `ENHANCEMENT_MODEL` — `"qwen3.5:2b"` default; `ENHANCEMENT_MODELS` = `("qwen3.5:2b", "qwen3.5:4b")`
+- `ENHANCEMENT_MODEL` — fixed `"qwen3.5:2b"` (no UI model toggle); `ENHANCEMENT_MODEL_DOWNLOAD_GB` = `2.7`, `ENHANCEMENT_MODEL_MIN_GB` = `4.0` gate the pre-download hardware check
 - `SAMPLE_RATE` — 16000 Hz
 - `HOTKEY` — Ctrl+Shift+Space (via `WH_KEYBOARD_LL` hook)
 - `SILENCE_RMS_THRESHOLD` — `0.015`
@@ -133,7 +133,7 @@ Settings persist to `config.json` (gitignored). Transcription runs CPU-only with
 - **Raw vs. enhanced:** With the toggle off, the raw Whisper transcript is typed immediately. With it on, the overlay shows an `enhancing` state, a local model rewrites the transcript, then the structured prompt is typed. Enhancement adds latency; it is not instantaneous.
 - **Local-only boundary:** `ollama.py` talks to `http://127.0.0.1:11434` only — no configurable remote endpoint. Transcript and prompt text never leave the machine. The debug log (`dictate.log`) records only lengths/status, never content; the visible history is persisted to `transcriptions.jsonl` for the log panel.
 - **Agent Skill selection without execution:** `skills.py` parses only bounded YAML frontmatter (≤64 KiB reads, name-validated, description-capped) from workspace/user skill dirs to suggest skill names. Skill bodies are never opened or executed; names/descriptions are untrusted catalog data. `disable-model-invocation: true` skills are excluded from automatic candidates but honored when named explicitly.
-- **Workspace override:** `workspace.py` resolves a trusted root from the manual override (wins) or by parsing an absolute path out of the foreground-window title and ascending to a Git root. It never scans drives or guesses.
+- **Workspace override:** `workspace.py` resolves a trusted root from the manual override (wins) or by parsing an absolute path out of the title of the window the user dictated into (captured at record start, not the live foreground) and ascending to a Git root. It never scans drives or guesses.
 - **Raw fallback:** Disabled toggle, unavailable Ollama, missing model, or a malformed response all fall back to typing the preserved raw transcript. Enhancement is lossless.
 
 Requires [Ollama for Windows](https://ollama.com/download); `setup.bat` optionally pulls `qwen3.5:2b` (~2.7 GB). Enhancement package coverage: `pytest tests/test_skills.py tests/test_ollama.py tests/test_prompt.py tests/test_enhancement_service.py --cov=siqspeak.enhancement`.

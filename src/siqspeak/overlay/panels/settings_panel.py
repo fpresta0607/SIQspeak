@@ -22,6 +22,9 @@ from PIL import Image, ImageDraw
 from siqspeak.audio.devices import _get_input_devices
 from siqspeak.config import (
     CYAN,
+    ENHANCEMENT_MODEL,
+    ENHANCEMENT_MODEL_DOWNLOAD_GB,
+    ENHANCEMENT_MODEL_MIN_GB,
     GRAY,
     LOG_CARD_BORDER,
     LOG_CARD_FILL,
@@ -30,6 +33,7 @@ from siqspeak.config import (
     WHITE,
     _settings_panel_width,
 )
+from siqspeak.enhancement.hardware import can_run_model
 from siqspeak.enhancement.ollama import OllamaClient, OllamaError, OllamaUnavailable
 from siqspeak.overlay.panels import _show_panel_window
 from siqspeak.overlay.panels.log_panel import _get_font
@@ -44,7 +48,7 @@ OLLAMA_DOWNLOAD_URL = "https://ollama.com/download/windows"
 SETTINGS_PAD = 12
 SETTINGS_GAP = 10
 SETTINGS_ROW_H = 48
-SETTINGS_STATUS_H = 62
+SETTINGS_STATUS_H = 84  # model requirement + machine readout + status/action
 QUIT_BTN_H = 44
 SETTINGS_CARD_MARGIN_X = 16
 SETTINGS_CARD_PAD_X = 14
@@ -60,7 +64,6 @@ class SettingsAction(str, Enum):
     MICROPHONE = "microphone"
     ENHANCEMENT_TOGGLE = "enhancement_toggle"
     WORKSPACE = "workspace"
-    ENHANCER_MODEL = "enhancer_model"
     INSTALL_MODEL = "install_model"
     QUIT = "quit"
 
@@ -87,7 +90,6 @@ def _settings_layout(state: AppState) -> list[SettingsRow]:
         (SettingsAction.MICROPHONE, _mic_section_height(state)),
         (SettingsAction.ENHANCEMENT_TOGGLE, SETTINGS_ROW_H),
         (SettingsAction.WORKSPACE, SETTINGS_ROW_H),
-        (SettingsAction.ENHANCER_MODEL, SETTINGS_ROW_H),
         (SettingsAction.INSTALL_MODEL, SETTINGS_STATUS_H),
         (SettingsAction.QUIT, QUIT_BTN_H),
     ]
@@ -116,9 +118,12 @@ def _settings_panel_height(state: AppState) -> int:
 # ---------------------------------------------------------------------------
 # Display helpers (pure)
 # ---------------------------------------------------------------------------
-def _model_short_label(model: str) -> str:
-    """Compact chip label, e.g. ``qwen3.5:2b`` -> ``2b``."""
-    return model.split(":", 1)[1] if ":" in model else model
+def _model_requirement_label() -> str:
+    """Fixed-model line, e.g. ``qwen3.5:2b · ~2.7 GB · needs ~4 GB``."""
+    return (
+        f"{ENHANCEMENT_MODEL} · ~{ENHANCEMENT_MODEL_DOWNLOAD_GB:.1f} GB"
+        f" · needs ~{ENHANCEMENT_MODEL_MIN_GB:.0f} GB"
+    )
 
 
 def _workspace_display(state: AppState) -> tuple[str, str]:
@@ -154,12 +159,12 @@ def _settings_render_signature(state: AppState) -> tuple:
         state.mic_device,
         len(state.mic_devices),
         state.enhancement_enabled,
-        state.enhancement_model,
         state.enhancement_status,
         int(state.enhancement_pull_progress * 100),
         state.workspace_override,
         state.workspace_detected_root,
         state.enhancement_error,
+        state.enhancement_hardware,
     )
 
 
@@ -219,10 +224,6 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     _draw_card(draw, card_left, rows[SettingsAction.WORKSPACE], card_right)
     _draw_workspace(draw, state, rows[SettingsAction.WORKSPACE],
                     text_left, value_right, font_label, font_meta, font_chip)
-
-    _draw_card(draw, card_left, rows[SettingsAction.ENHANCER_MODEL], card_right)
-    _draw_model(draw, state, rows[SettingsAction.ENHANCER_MODEL],
-                text_left, value_right, font_label, font_chip)
 
     _draw_card(draw, card_left, rows[SettingsAction.INSTALL_MODEL], card_right)
     _draw_status(draw, state, rows[SettingsAction.INSTALL_MODEL],
@@ -316,42 +317,19 @@ def _draw_workspace(draw, state, row, text_left, value_right, font_label, font_m
     draw.text((text_left, row.y + 27), path, font=font_meta, fill=(*GRAY, 210))
 
 
-def _draw_model(draw, state, row, text_left, value_right, font_label, font_chip) -> None:
-    from siqspeak.config import ENHANCEMENT_MODELS
-
-    cy = row.y + row.height // 2
-    draw.text((text_left, cy - 9), "Enhancer model", font=font_label, fill=(*WHITE, 255))
-
-    chip_h = 24
-    chip_y0 = cy - chip_h // 2
-    x_right = value_right
-    for model in reversed(ENHANCEMENT_MODELS):
-        label = _model_short_label(model)
-        chip_w = int(draw.textlength(label, font=font_chip)) + 20
-        x0 = x_right - chip_w
-        selected = state.enhancement_model == model
-        if selected:
-            draw.rounded_rectangle(
-                [x0, chip_y0, x_right, chip_y0 + chip_h], radius=8, fill=(*_ACCENT_SOFT, 255),
-            )
-            fill = (*CYAN, 255)
-        else:
-            draw.rounded_rectangle(
-                [x0, chip_y0, x_right, chip_y0 + chip_h], radius=8, outline=(*GRAY, 160), width=1,
-            )
-            fill = (*WHITE, 170)
-        draw.text((x0 + 10, chip_y0 + 4), label, font=font_chip, fill=fill)
-        x_right = x0 - 8
-
-
 def _draw_status(
     draw, state, row, text_left, value_right, card_left, card_right, font_label, font_meta, font_chip,
 ) -> None:
-    draw.text((text_left, row.y + 8), "Prompt enhancer", font=font_label, fill=(*WHITE, 255))
+    # Fixed model + its requirement, then the detected-hardware readout.
+    draw.text((text_left, row.y + 8), _model_requirement_label(), font=font_label, fill=(*WHITE, 255))
+    if state.enhancement_hardware:
+        readout = _truncate_to_width(draw, state.enhancement_hardware, font_meta, value_right - text_left)
+        draw.text((text_left, row.y + 30), readout, font=font_meta, fill=(*GRAY, 210))
+
     message, action = _status_display(state)
 
     if state.enhancement_status == "pulling":
-        draw.text((text_left, row.y + 30), message, font=font_meta, fill=(*CYAN, 230))
+        draw.text((text_left, row.y + 50), message, font=font_meta, fill=(*CYAN, 230))
         bar_y = row.y + row.height - 12
         bar_left = text_left
         bar_right = value_right
@@ -372,14 +350,14 @@ def _draw_status(
     elif state.enhancement_status == "error":
         msg_color = (220, 90, 90, 230)
     message = _truncate_to_width(draw, message, font_meta, value_right - text_left - 110)
-    draw.text((text_left, row.y + 32), message, font=font_meta, fill=msg_color)
+    draw.text((text_left, row.y + 52), message, font=font_meta, fill=msg_color)
 
     if action:
         btn_w = int(draw.textlength(action, font=font_chip)) + 24
         btn_h = 26
         bx1 = value_right
         bx0 = bx1 - btn_w
-        by0 = row.y + (row.height - btn_h) // 2
+        by0 = row.y + 48
         draw.rounded_rectangle(
             [bx0, by0, bx1, by0 + btn_h], radius=8, fill=(*_ACCENT_SOFT, 255),
             outline=(*CYAN, 200), width=1,
@@ -407,6 +385,8 @@ def _open_ollama_download() -> None:
 def _refresh_enhancer_status(state: AppState) -> None:
     """Probe Ollama in the background and store a status string on state."""
     def worker() -> None:
+        # Probe hardware off the render thread (nvidia-smi may take a moment).
+        state.enhancement_hardware = can_run_model(ENHANCEMENT_MODEL_MIN_GB)[1]
         client = OllamaClient()
         try:
             if not client.is_available():

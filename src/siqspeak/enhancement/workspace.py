@@ -25,18 +25,20 @@ def find_repository_root(path: Path) -> Path | None:
 
 def resolve_workspace(
     manual_override: str | None,
-    foreground_title: str,
+    window_title: str,
 ) -> Path | None:
     """Resolve a trusted workspace root, or None when unknown.
 
-    A valid manual override always wins. Otherwise scan the foreground-window
-    title for an existing absolute path and ascend to its Git root. Never guess.
+    ``window_title`` is the title of the window the user dictated into, captured
+    at record start (not the live foreground). A valid manual override always
+    wins. Otherwise scan that title for an existing absolute path and ascend to
+    its Git root. Never guess.
     """
     if manual_override:
         manual = Path(manual_override).expanduser()
         if manual.is_dir():
             return manual.resolve()
-    for match in WINDOWS_PATH.finditer(foreground_title):
+    for match in WINDOWS_PATH.finditer(window_title):
         detected = Path(match.group(0).rstrip(" -"))
         if detected.exists():
             return find_repository_root(detected)

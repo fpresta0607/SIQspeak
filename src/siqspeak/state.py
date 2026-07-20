@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 class EnhancePrompt(Protocol):
     """Boundary that turns a raw transcript into an enhancement result."""
 
-    def __call__(self, raw_text: str) -> EnhancementResult: ...
+    def __call__(self, raw_text: str, window_title: str) -> EnhancementResult: ...
 
 
 @dataclass
@@ -116,6 +116,7 @@ class AppState:
     enhancement_model: str = "qwen3.5:2b"
     enhancement_status: str | None = None
     enhancement_error: str | None = None
+    enhancement_hardware: str | None = None  # detected RAM/VRAM readout (background probe)
     enhancement_pull_progress: float = 0.0
     workspace_override: str | None = None
     workspace_detected_root: str | None = None

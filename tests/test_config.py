@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from siqspeak.config import (
+    ENHANCEMENT_MODEL,
     MODEL_NAME,
     SPEECH_MODELS,
     _load_config,
@@ -36,12 +37,27 @@ def test_save_state_config_persists_enhancement_settings(
     monkeypatch.setattr("siqspeak.config.CONFIG_PATH", str(tmp_path / "config.json"))
     state = AppState()
     state.enhancement_enabled = True
-    state.enhancement_model = "qwen3.5:4b"
     state.workspace_override = r"C:\dev\project"
 
     save_state_config(state)
 
-    assert _load_config()["enhancement_model"] == "qwen3.5:4b"
+    assert _load_config()["enhancement_model"] == ENHANCEMENT_MODEL
+    assert _load_config()["enhancement_enabled"] is True
+    assert _load_config()["workspace_override"] == r"C:\dev\project"
+
+
+def test_stale_persisted_enhancement_model_is_not_authoritative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A config written by an older build may carry a different enhancement_model.
+    # There is one model now; startup pins state.enhancement_model to the single
+    # ENHANCEMENT_MODEL constant and never reads the persisted value back.
+    monkeypatch.setattr("siqspeak.config.CONFIG_PATH", str(tmp_path / "config.json"))
+    save_config({"enhancement_model": "qwen3.5:4b"})
+
+    assert _load_config()["enhancement_model"] == "qwen3.5:4b"  # stale value on disk
+    assert ENHANCEMENT_MODEL == "qwen3.5:2b"  # the one model the app pins to
+    assert AppState().enhancement_model == ENHANCEMENT_MODEL
 
 
 def test_load_config_missing_file(tmp_path, monkeypatch):

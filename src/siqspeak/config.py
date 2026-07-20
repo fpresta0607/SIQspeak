@@ -52,7 +52,8 @@ SAMPLE_RATE = 16000
 
 # Local prompt enhancement (optional, opt-in)
 ENHANCEMENT_MODEL = "qwen3.5:2b"
-ENHANCEMENT_MODELS = ("qwen3.5:2b", "qwen3.5:4b")
+ENHANCEMENT_MODEL_DOWNLOAD_GB = 2.7   # on-disk download size
+ENHANCEMENT_MODEL_MIN_GB = 4.0        # RAM/VRAM needed to actually run it
 
 # Streaming transcription (type-as-you-talk)
 STREAM_MODE = False                 # opt-in; toggled via settings panel

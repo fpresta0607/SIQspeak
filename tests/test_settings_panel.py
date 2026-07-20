@@ -10,7 +10,6 @@ import pytest
 
 from siqspeak.overlay.panels.settings_panel import (
     SettingsAction,
-    _model_short_label,
     _render_settings_panel,
     _settings_layout,
     _settings_panel_height,
@@ -25,7 +24,6 @@ def test_action_enum_has_stable_string_values() -> None:
     assert SettingsAction.MICROPHONE == "microphone"
     assert SettingsAction.ENHANCEMENT_TOGGLE == "enhancement_toggle"
     assert SettingsAction.WORKSPACE == "workspace"
-    assert SettingsAction.ENHANCER_MODEL == "enhancer_model"
     assert SettingsAction.INSTALL_MODEL == "install_model"
     assert SettingsAction.QUIT == "quit"
 
@@ -38,7 +36,6 @@ def test_layout_orders_rows_and_maps_each_to_its_action() -> None:
         SettingsAction.MICROPHONE,
         SettingsAction.ENHANCEMENT_TOGGLE,
         SettingsAction.WORKSPACE,
-        SettingsAction.ENHANCER_MODEL,
         SettingsAction.INSTALL_MODEL,
         SettingsAction.QUIT,
     ]
@@ -70,12 +67,6 @@ def test_expanded_microphone_band_covers_device_rows() -> None:
     assert settings_action_at_y(state, inside_device_list) == SettingsAction.MICROPHONE
     # Rows below shift down to make room for the expansion.
     assert rows[1].y >= mic_row.y + mic_row.height
-
-
-def test_model_short_label_derives_size_suffix() -> None:
-    assert _model_short_label("qwen3.5:2b") == "2b"
-    assert _model_short_label("qwen3.5:4b") == "4b"
-    assert _model_short_label("plainname") == "plainname"
 
 
 def test_workspace_display_manual_override_wins() -> None:
@@ -152,8 +143,7 @@ def _assert_premultiplied_bgra(buf: np.ndarray, width: int, height: int) -> None
             setattr(s, "enhancement_status", "pulling"),
             setattr(s, "enhancement_pull_progress", 0.6),
         ),
-        lambda s: setattr(s, "enhancement_model", "qwen3.5:2b"),
-        lambda s: setattr(s, "enhancement_model", "qwen3.5:4b"),
+        lambda s: setattr(s, "enhancement_hardware", "31.7 GB RAM, 8.0 GB GPU"),
         lambda s: setattr(s, "workspace_detected_root", r"C:\dev\repo"),
         lambda s: setattr(s, "workspace_override", r"C:\dev\manual"),
     ],

@@ -30,7 +30,9 @@ from siqspeak.config import (
     WM_TIMER,
     _load_config,
 )
+from siqspeak.enhancement.context import load_workspace_context
 from siqspeak.enhancement.ollama import OllamaClient
+from siqspeak.enhancement.personalization import select_style_examples
 from siqspeak.enhancement.prompt import EnhancementResult
 from siqspeak.enhancement.service import enhance_request
 from siqspeak.enhancement.skills import discover_skills
@@ -362,27 +364,15 @@ def message_loop(state: AppState) -> None:
 
 
 
-def _foreground_window_title() -> str:
-    """Return the current foreground window title (empty when unavailable)."""
-    user32 = ctypes.windll.user32
-    hwnd = user32.GetForegroundWindow()
-    if not hwnd:
-        return ""
-    length = user32.GetWindowTextLengthW(hwnd)
-    buf = ctypes.create_unicode_buffer(length + 1)
-    user32.GetWindowTextW(hwnd, buf, length + 1)
-    return buf.value
-
-
 def _install_enhancer(state: AppState) -> None:
     """Expose a typed enhancement boundary on the state.
 
-    The boundary is called from the transcription worker. The workspace root and
-    skill catalog are resolved *per request* so auto-detection reflects the editor
-    focused at dictation time and a manually picked workspace takes effect without
-    a restart. The loopback Ollama client is constructed once (it is stateless).
-    Any setup failure leaves ``enhance_prompt`` unset, which safely disables
-    enhancement.
+    The boundary is called from the transcription worker with the title of the
+    window dictated into. The workspace root and skill catalog are resolved *per
+    request* so auto-detection reflects the editor the user spoke into and a
+    manually picked workspace takes effect without a restart. The loopback Ollama
+    client is constructed once (it is stateless). Any setup failure leaves
+    ``enhance_prompt`` unset, which safely disables enhancement.
     """
     try:
         client = OllamaClient()
@@ -390,20 +380,26 @@ def _install_enhancer(state: AppState) -> None:
         log.exception("Prompt enhancement setup failed — enhancement disabled")
         return
 
-    def enhance_prompt(raw_text: str) -> EnhancementResult:
+    def enhance_prompt(raw_text: str, window_title: str) -> EnhancementResult:
         try:
-            workspace = resolve_workspace(state.workspace_override, _foreground_window_title())
+            workspace = resolve_workspace(state.workspace_override, window_title)
             state.workspace_detected_root = str(workspace) if workspace else None
             catalog = discover_skills(workspace, Path.home())
+            context = load_workspace_context(workspace, Path.home())
+            style = select_style_examples(raw_text, Path.home(), workspace, limit=3)
         except Exception:
-            log.exception("Skill discovery failed — enhancing without a catalog")
+            log.exception("context/skill/style discovery failed — enhancing without them")
             catalog = ()
+            context = ()
+            style = ()
         return enhance_request(
             raw_text,
             enabled=state.enhancement_enabled,
             model=state.enhancement_model,
             client=client,
             catalog=catalog,
+            context=context,
+            style_examples=style,
         )
 
     state.enhance_prompt = enhance_prompt
@@ -438,7 +434,9 @@ def main() -> None:
     state.pill_user_y = cfg.get("pill_y")
     state.mic_device = cfg.get("mic_device")
     state.enhancement_enabled = cfg.get("enhancement_enabled", False)
-    state.enhancement_model = cfg.get("enhancement_model", ENHANCEMENT_MODEL)
+    # Single enhancer model — ignore any stale persisted value so an old config
+    # (e.g. a previously chosen model) can never override the one model in use.
+    state.enhancement_model = ENHANCEMENT_MODEL
     state.workspace_override = cfg.get("workspace_override")
 
     # Wire the optional local prompt-enhancement boundary once at startup
