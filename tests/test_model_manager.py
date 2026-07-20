@@ -67,17 +67,65 @@ def test_successful_download_loads_model_and_reports_progress(
 def test_network_failure_maps_to_actionable_error(
     state: AppState, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    calls = {"n": 0}
+
     def boom(repo_id: str, **kw: object) -> str:
+        calls["n"] += 1
         raise ConnectionError("name resolution failed")
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", boom)
     monkeypatch.setattr(manager, "WhisperModel", _FakeModel)
+    monkeypatch.setattr(manager, "_RETRY_BACKOFF_SECONDS", 0)
 
     manager._download_and_load(state, "base.en")
 
     assert state.download_error is not None
     assert "network" in state.download_error.lower()
     assert state.model_loading is False
+    # A persistent network error is retried up to the cap before giving up.
+    assert calls["n"] == manager._MAX_DOWNLOAD_ATTEMPTS
+
+
+def test_transient_network_error_resumes_and_succeeds(
+    state: AppState, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {"n": 0}
+
+    def flaky(repo_id: str, **kw: object) -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("connection reset")
+        return r"C:\cache\base.en"
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", flaky)
+    monkeypatch.setattr(manager, "WhisperModel", _FakeModel)
+    monkeypatch.setattr(manager, "_RETRY_BACKOFF_SECONDS", 0)
+
+    manager._download_and_load(state, "base.en")
+
+    assert calls["n"] == 2  # failed once, resumed, then succeeded
+    assert isinstance(state.model, _FakeModel)
+    assert state.loaded_model_name == "base.en"
+    assert state.download_error is None
+    assert state.model_loading is False
+
+
+def test_storage_failure_is_not_retried(
+    state: AppState, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {"n": 0}
+
+    def boom(repo_id: str, **kw: object) -> str:
+        calls["n"] += 1
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", boom)
+    monkeypatch.setattr(manager, "WhisperModel", _FakeModel)
+    monkeypatch.setattr(manager, "_RETRY_BACKOFF_SECONDS", 0)
+
+    manager._download_and_load(state, "base.en")
+
+    assert calls["n"] == 1  # non-transient: no point retrying
 
 
 def test_storage_failure_maps_to_actionable_error(

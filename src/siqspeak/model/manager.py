@@ -23,6 +23,13 @@ _ALLOW_PATTERNS = [
     "vocabulary.*",
 ]
 
+# Large distil models (up to ~1.4 GB) over anonymous/throttled HF connections drop
+# mid-transfer. snapshot_download resumes the partial `.incomplete` blob on the next
+# call, so retry transient network failures instead of surfacing them to the user.
+_NETWORK_ERROR = "Network error - check connection"
+_MAX_DOWNLOAD_ATTEMPTS = 4
+_RETRY_BACKOFF_SECONDS = 3
+
 
 def _is_model_cached(name: str) -> bool:
     """Check if a Whisper model is already downloaded in the HF cache."""
@@ -59,10 +66,10 @@ def _classify_download_error(exc: BaseException) -> str:
     if isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.ENOSPC:
         return "Not enough disk space"
     if isinstance(exc, (ConnectionError, TimeoutError)):
-        return "Network error - check connection"
+        return _NETWORK_ERROR
     text = f"{type(exc).__name__} {exc}".lower()
     if any(token in text for token in ("connection", "timeout", "network", "url", "dns", "resolve")):
-        return "Network error - check connection"
+        return _NETWORK_ERROR
     return "Download failed"
 
 
@@ -117,18 +124,39 @@ def _start_model_download_and_load(state: AppState, name: str) -> None:
         state.model_loading = False
 
 
+def _download_snapshot(state: AppState, repo_id: str) -> str:
+    """Download a model snapshot, resuming and retrying on transient network errors.
+
+    ``snapshot_download`` resumes the partial ``.incomplete`` blob on each call, so a
+    retry continues a throttled/dropped transfer instead of restarting it. Non-transient
+    errors (disk full, missing repo) raise on the first attempt — retrying won't help.
+    """
+    import huggingface_hub
+
+    for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):
+        try:
+            return huggingface_hub.snapshot_download(
+                repo_id,
+                allow_patterns=_ALLOW_PATTERNS,
+                tqdm_class=_make_progress_class(state),
+            )
+        except Exception as exc:
+            is_transient = _classify_download_error(exc) == _NETWORK_ERROR
+            if not is_transient or attempt == _MAX_DOWNLOAD_ATTEMPTS:
+                raise
+            log.warning("Download attempt %d/%d failed (%s); resuming...",
+                        attempt, _MAX_DOWNLOAD_ATTEMPTS, type(exc).__name__)
+            time.sleep(_RETRY_BACKOFF_SECONDS)
+    raise RuntimeError("unreachable")  # loop either returns or raises
+
+
 def _download_and_load(state: AppState, name: str) -> None:
     """Download a public model snapshot and load it. Runs on a worker thread."""
     try:
-        import huggingface_hub
         from faster_whisper.utils import _MODELS
 
         repo_id = _MODELS[name]
-        model_path = huggingface_hub.snapshot_download(
-            repo_id,
-            allow_patterns=_ALLOW_PATTERNS,
-            tqdm_class=_make_progress_class(state),
-        )
+        model_path = _download_snapshot(state, repo_id)
 
         state.download_progress = 1.0
         log.info("Download complete: %s, loading...", name)
