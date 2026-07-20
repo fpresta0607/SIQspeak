@@ -24,6 +24,7 @@ transcriptions.jsonl
 
 # Claude Code
 .claude/
+.worktrees/
 
 # IDE
 .vscode/
