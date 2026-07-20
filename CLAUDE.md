@@ -50,7 +50,7 @@ src/siqspeak/
     streaming.py           # _transcription_worker()
     devices.py             # _get_input_devices()
   model/
-    manager.py             # _start_model_load(), _start_model_download_and_load(), cache check
+    manager.py             # _start_model_load(), _start_model_download_and_load(), _download_snapshot() (resume+retry), cache check
   overlay/
     rendering.py           # pill masks, idle/active frame rendering, BGRA conversion
     pill.py                # _pill_screen_rect(), _set_pill_mode() — swaps two overlay windows
