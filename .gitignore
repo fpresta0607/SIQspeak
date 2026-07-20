@@ -34,3 +34,4 @@ transcriptions.jsonl
 Thumbs.db
 desktop.ini
 .DS_Store
+.coverage
