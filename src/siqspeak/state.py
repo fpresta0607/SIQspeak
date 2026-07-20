@@ -71,7 +71,6 @@ class AppState:
     active_panel: str | None = None  # "info" | "model" | "settings" | None
     transcription_log: list[dict] = field(default_factory=list)
     copy_debounce: bool = False
-    copy_hover_row: int | None = None
     copied_row: int | None = None
     copied_time: float = 0.0
     log_entry_heights: list[int] = field(default_factory=list)

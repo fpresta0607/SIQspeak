@@ -154,12 +154,25 @@ SETTINGS_HEADER_H = 52
 
 # Log panel rendering
 LOG_HEADER_H = 72
-LOG_COPY_BTN_W = 48
-LOG_COPY_VISUAL_W = 38    # btn_hw * 2 — actual rendered button width
-LOG_COPY_BTN_HH = 18      # half-height of visual button
-LOG_COPY_HOVER_PAD = 5    # comfort padding around button for hover/click
-LOG_TEXT_LEFT = 90
-LOG_LINE_H = 28
+LOG_LINE_H = 26
+
+# History cards (stable, Fluent-inspired — no hover state)
+LOG_CARD_MARGIN_X = 16    # card left/right inset from panel edge
+LOG_CARD_PAD_X = 14       # card inner horizontal padding
+LOG_CARD_PAD_Y = 12       # card inner vertical padding
+LOG_CARD_GAP = 12         # vertical space between cards
+LOG_CARD_RADIUS = 10
+LOG_META_H = 20           # metadata row height (timestamp + Enhanced badge)
+LOG_META_GAP = 6          # gap between primary text and metadata row
+LOG_COPY_BTN_W = 40       # copy hit-column width at the card's right edge
+
+LOG_CARD_FILL = (26, 33, 52)      # subtle raised card fill over PILL_BG
+LOG_CARD_BORDER = (48, 58, 84)    # hairline card border
+LOG_BADGE_FILL = (16, 46, 54)     # Enhanced badge background (cyan-tinted)
+LOG_COPY_IDLE = (110, 120, 140)   # low-contrast always-visible copy icon
+LOG_COPIED_GREEN = (40, 220, 80)
+
+COPY_CONFIRM_SECONDS = 1.5
 
 # Dot color mapping (recording/transcribing)
 DOT_COLOR = {"recording": CYAN, "transcribing": WHITE}

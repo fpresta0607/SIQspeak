@@ -4,19 +4,19 @@ import ctypes
 import ctypes.wintypes
 import logging
 import time
+from collections.abc import Sequence
 
 import pyperclip
 
 from siqspeak.config import (
-    LOG_COPY_BTN_HH,
+    LOG_CARD_MARGIN_X,
     LOG_COPY_BTN_W,
-    LOG_COPY_HOVER_PAD,
-    LOG_COPY_VISUAL_W,
     LOG_HEADER_H,
     LOG_PANEL_MAX_VISIBLE,
     LOG_PANEL_PADDING,
     _log_panel_dims,
 )
+from siqspeak.overlay.panels.log_panel import _visible_entries
 from siqspeak.state import AppState
 
 log = logging.getLogger("siqspeak")
@@ -34,51 +34,31 @@ def _is_cursor_over_hwnd(hwnd: int) -> bool:
     return rect.left <= pt.x <= rect.right and rect.top <= pt.y <= rect.bottom
 
 
-def _update_copy_hover(state: AppState) -> None:
-    """Update copy_hover_row based on cursor position over copy buttons."""
-    if state.active_panel != "info" or not state.log_panel_hwnd:
-        state.copy_hover_row = None
-        return
-    if not _is_cursor_over_hwnd(state.log_panel_hwnd):
-        state.copy_hover_row = None
-        return
+def _copy_row_at_position(
+    x: int,
+    y: int,
+    panel_width: int,
+    entry_heights: Sequence[int],
+) -> int | None:
+    """Map a panel-relative point to a history row index, or None.
 
-    user32 = ctypes.windll.user32
-    pt = ctypes.wintypes.POINT()
-    user32.GetCursorPos(ctypes.byref(pt))
-    rect = ctypes.wintypes.RECT()
-    user32.GetWindowRect(state.log_panel_hwnd, ctypes.byref(rect))
-    rx = pt.x - rect.left
-    ry = pt.y - rect.top
-
-    # Check if cursor is in the copy button column (aligned to visual button)
-    panel_w, _ = _log_panel_dims()
-    copy_x = panel_w - LOG_COPY_BTN_W - 8
-    btn_left = copy_x - LOG_COPY_HOVER_PAD
-    btn_right = copy_x + LOG_COPY_VISUAL_W + LOG_COPY_HOVER_PAD
-    if rx < btn_left or rx > btn_right:
-        state.copy_hover_row = None
-        return
-
-    # Walk variable-height rows with vertical button bounds check
+    Pure geometry: no Win32 calls. Matches the copy-column and row strides used
+    by the renderer so a click on a card's copy control resolves to that row.
+    """
+    copy_right = panel_width - LOG_CARD_MARGIN_X
+    copy_left = copy_right - LOG_COPY_BTN_W
+    if not (copy_left <= x <= copy_right):
+        return None
     y_acc = LOG_HEADER_H + LOG_PANEL_PADDING
-    entries_count = min(len(state.transcription_log), LOG_PANEL_MAX_VISIBLE)
-    for idx, entry_h in enumerate(state.log_entry_heights):
-        if idx >= entries_count:
-            break
-        if y_acc <= ry < y_acc + entry_h:
-            btn_cy = y_acc + entry_h // 2
-            if abs(ry - btn_cy) > LOG_COPY_BTN_HH + LOG_COPY_HOVER_PAD:
-                state.copy_hover_row = None
-                return
-            state.copy_hover_row = idx
-            return
-        y_acc += entry_h
-    state.copy_hover_row = None
+    for idx, stride in enumerate(entry_heights):
+        if y_acc <= y < y_acc + stride:
+            return idx
+        y_acc += stride
+    return None
 
 
 def _handle_copy_click(state: AppState) -> None:
-    """Check if user clicked a copy button in the log panel."""
+    """Copy the transcript of the history row under a left-click, if any."""
     user32 = ctypes.windll.user32
 
     # VK_LBUTTON
@@ -89,42 +69,29 @@ def _handle_copy_click(state: AppState) -> None:
     if state.copy_debounce or state.active_panel != "info" or not state.log_panel_hwnd:
         return
 
-    # Get cursor position relative to log panel
     pt = ctypes.wintypes.POINT()
     user32.GetCursorPos(ctypes.byref(pt))
     rect = ctypes.wintypes.RECT()
     user32.GetWindowRect(state.log_panel_hwnd, ctypes.byref(rect))
-
     rx = pt.x - rect.left
     ry = pt.y - rect.top
 
-    # Check if in copy button column (aligned to visual button)
     panel_w, _ = _log_panel_dims()
-    copy_x = panel_w - LOG_COPY_BTN_W - 8
-    btn_left = copy_x - LOG_COPY_HOVER_PAD
-    btn_right = copy_x + LOG_COPY_VISUAL_W + LOG_COPY_HOVER_PAD
-    if rx < btn_left or rx > btn_right:
+    idx = _copy_row_at_position(rx, ry, panel_w, state.log_entry_heights)
+    if idx is None:
         return
 
-    # Walk variable-height rows to find which entry was clicked (scroll-aware)
-    total = len(state.transcription_log)
-    end = total - state.log_scroll_offset
-    start = max(0, end - LOG_PANEL_MAX_VISIBLE)
-    entries = list(reversed(state.transcription_log[start:end]))
-    y_acc = LOG_HEADER_H + LOG_PANEL_PADDING
-    for idx, entry_h in enumerate(state.log_entry_heights):
-        if idx >= len(entries):
-            break
-        if y_acc <= ry < y_acc + entry_h:
-            text = entries[idx].get("text", "")
-            if text and text != "No transcriptions yet":
-                try:
-                    pyperclip.copy(text)
-                    log.info("COPIED: %s", text[:50])
-                    state.copied_row = idx
-                    state.copied_time = time.time()
-                except Exception:
-                    log.exception("Failed to copy text")
-            state.copy_debounce = True
-            return
-        y_acc += entry_h
+    entries = _visible_entries(
+        state.transcription_log, state.log_scroll_offset, LOG_PANEL_MAX_VISIBLE,
+    )
+    if idx < len(entries):
+        text = entries[idx].get("text", "")
+        if text and text != "No transcriptions yet":
+            try:
+                pyperclip.copy(text)
+                log.info("COPIED: %s", text[:50])
+                state.copied_row = idx
+                state.copied_time = time.time()
+            except Exception:
+                log.exception("Failed to copy text")
+    state.copy_debounce = True

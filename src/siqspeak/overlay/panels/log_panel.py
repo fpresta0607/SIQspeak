@@ -4,19 +4,32 @@ import ctypes
 import ctypes.wintypes
 import logging
 import time
+from dataclasses import dataclass
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from siqspeak.config import (
+    COPY_CONFIRM_SECONDS,
     CYAN,
     GRAY,
+    LOG_BADGE_FILL,
+    LOG_CARD_BORDER,
+    LOG_CARD_FILL,
+    LOG_CARD_GAP,
+    LOG_CARD_MARGIN_X,
+    LOG_CARD_PAD_X,
+    LOG_CARD_PAD_Y,
+    LOG_CARD_RADIUS,
+    LOG_COPIED_GREEN,
     LOG_COPY_BTN_W,
+    LOG_COPY_IDLE,
     LOG_HEADER_H,
     LOG_LINE_H,
+    LOG_META_GAP,
+    LOG_META_H,
     LOG_PANEL_MAX_VISIBLE,
     LOG_PANEL_PADDING,
-    LOG_TEXT_LEFT,
     PILL_BG,
     WHITE,
     _log_panel_dims,
@@ -26,6 +39,14 @@ from siqspeak.overlay.rendering import _draw_centered_text, _rgba_to_premul_bgra
 from siqspeak.state import AppState
 
 log = logging.getLogger("siqspeak")
+
+_PLACEHOLDER = {"text": "No transcriptions yet", "timestamp": "", "time_epoch": 0}
+
+# Cached font faces (name, size) — display/body/utility roles.
+_FONT_DISPLAY = "seguisb.ttf"
+_FONT_BODY = "segoeui.ttf"
+_FONT_TEXT = "seguisb.ttf"
+_SIZE_TEXT = 16
 
 # ---------------------------------------------------------------------------
 # Font cache — load each (name, size) pair once; avoid disk I/O on every frame
@@ -61,38 +82,115 @@ def _wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[
     return lines
 
 
+def _visible_entries(
+    transcription_log: list[dict], scroll_offset: int, max_visible: int,
+) -> list[dict]:
+    """Newest-first slice of the log for the current scroll offset (pure)."""
+    total = len(transcription_log)
+    end = total - scroll_offset
+    start = max(0, end - max_visible)
+    return list(reversed(transcription_log[start:end]))
+
+
+@dataclass(frozen=True)
+class CardLayout:
+    """Resolved geometry and metadata for one history card."""
+
+    entry: dict
+    lines: tuple[str, ...]
+    y: int
+    height: int
+    show_copy: bool
+    show_badge: bool
+    is_copied: bool
+
+
+def _card_height(num_lines: int) -> int:
+    return LOG_CARD_PAD_Y * 2 + num_lines * LOG_LINE_H + LOG_META_GAP + LOG_META_H
+
+
+def _layout_cards(
+    state: AppState, panel_w: int, max_h: int, now: float,
+) -> tuple[list[CardLayout], bool]:
+    """Lay out only the cards that fit the visible height.
+
+    Text wrapping (the expensive step) runs one entry at a time and stops as
+    soon as the next card would overflow, so a 50-entry log never wraps all 50.
+    """
+    entries = _visible_entries(
+        state.transcription_log, state.log_scroll_offset, LOG_PANEL_MAX_VISIBLE,
+    )
+    is_empty = not entries
+    if is_empty:
+        entries = [_PLACEHOLDER]
+
+    font_text = _get_font(_FONT_TEXT, _SIZE_TEXT)
+    text_max_w = panel_w - LOG_CARD_MARGIN_X * 2 - LOG_CARD_PAD_X * 2 - LOG_COPY_BTN_W
+    is_copied_fresh = (
+        state.copied_row is not None and (now - state.copied_time) < COPY_CONFIRM_SECONDS
+    )
+
+    y = LOG_HEADER_H + LOG_PANEL_PADDING
+    bottom_limit = max_h - LOG_PANEL_PADDING - 8
+    cards: list[CardLayout] = []
+    for idx, entry in enumerate(entries):
+        text = entry.get("text", "")
+        lines = _wrap_text(text, font_text, text_max_w) if text else [""]
+        height = _card_height(len(lines))
+        if cards and y + height > bottom_limit:
+            break
+        is_real = not is_empty and bool(entry.get("text")) and entry.get("time_epoch", 0) != 0
+        cards.append(CardLayout(
+            entry=entry,
+            lines=tuple(lines),
+            y=y,
+            height=height,
+            show_copy=is_real,
+            show_badge=bool(entry.get("enhanced")),
+            is_copied=is_copied_fresh and state.copied_row == idx,
+        ))
+        y += height + LOG_CARD_GAP
+
+    return cards, is_empty
+
+
+def _draw_copy_icon(
+    draw: ImageDraw.ImageDraw, cx: int, cy: int, is_copied: bool,
+    font_check: ImageFont.FreeTypeFont,
+) -> None:
+    """Always-visible, low-contrast clipboard glyph (green check when copied)."""
+    if is_copied:
+        draw.rounded_rectangle(
+            [cx - 15, cy - 15, cx + 15, cy + 15], radius=7, fill=(25, 50, 35, 255),
+        )
+        _draw_centered_text(draw, "✓", cx, cy, font_check, (*LOG_COPIED_GREEN, 255))
+        return
+    # Two offset rounded rectangles suggest a clipboard, drawn in quiet gray.
+    draw.rounded_rectangle(
+        [cx - 8, cy - 4, cx + 4, cy + 10], radius=3, outline=(*LOG_COPY_IDLE, 255), width=2,
+    )
+    draw.rounded_rectangle(
+        [cx - 4, cy - 10, cx + 8, cy + 4], radius=3, outline=(*LOG_COPY_IDLE, 255), width=2,
+    )
+
+
 def _render_log_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     """Render the log panel and return (bgra_buffer, width, height)."""
     panel_w, max_h = _log_panel_dims()
 
-    total_entries = len(state.transcription_log)
-    max_vis = LOG_PANEL_MAX_VISIBLE
-    # Apply scroll offset: offset=0 shows newest, offset>0 shows older
-    end = total_entries - state.log_scroll_offset
-    start = max(0, end - max_vis)
-    entries = list(reversed(state.transcription_log[start:end]))
-    if not entries:
-        entries = [{"text": "No transcriptions yet", "timestamp": "", "time_epoch": 0}]
+    cards, is_empty = _layout_cards(state, panel_w, max_h, time.time())
+    state.log_entry_heights = [card.height + LOG_CARD_GAP for card in cards]
 
-    font_header = _get_font("seguisb.ttf", 22)
-    font_sub    = _get_font("segoeui.ttf", 15)
-    font_text   = _get_font("seguisb.ttf", 18)
-    font_ts     = _get_font("segoeui.ttf", 14)
-    font_check  = _get_font("seguisb.ttf", 20)
-    font_scroll = _get_font("segoeui.ttf", 14)
-
-    text_max_w = panel_w - LOG_TEXT_LEFT - LOG_COPY_BTN_W - 20
-
-    entry_layouts = []
-    for entry in entries:
-        text = entry.get("text", "")
-        lines = _wrap_text(text, font_text, text_max_w) if text else [""]
-        row_h = max(len(lines) * LOG_LINE_H + 20, 54)
-        entry_layouts.append((lines, row_h))
-
-    state.log_entry_heights = [rh for _, rh in entry_layouts]
-    content_h = sum(state.log_entry_heights)
+    content_h = sum(card.height for card in cards) + LOG_CARD_GAP * max(0, len(cards) - 1)
     panel_h = min(LOG_HEADER_H + LOG_PANEL_PADDING * 2 + content_h + 8, max_h)
+
+    font_header = _get_font(_FONT_DISPLAY, 22)
+    font_sub = _get_font(_FONT_BODY, 15)
+    font_text = _get_font(_FONT_TEXT, _SIZE_TEXT)
+    font_meta = _get_font(_FONT_BODY, 13)
+    font_badge = _get_font(_FONT_DISPLAY, 12)
+    font_check = _get_font(_FONT_DISPLAY, 18)
+    font_scroll = _get_font(_FONT_BODY, 14)
 
     img = Image.new("RGBA", (panel_w, panel_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -104,66 +202,65 @@ def _render_log_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     )
 
     draw.text((20, 14), "Transcription Log", fill=(*WHITE, 255), font=font_header)
-    draw.text((20, 42), "Hold Ctrl+Shift+Space to dictate  \u2022  Release to transcribe",
+    draw.text((20, 42), "Hold Ctrl+Shift+Space to dictate  •  Release to transcribe",
               fill=(*GRAY, 200), font=font_sub)
     draw.line([(20, LOG_HEADER_H - 4), (panel_w - 20, LOG_HEADER_H - 4)], fill=(*GRAY, 100))
 
     # Scroll indicators
+    total_entries = len(state.transcription_log)
     can_scroll_up = state.log_scroll_offset > 0
-    can_scroll_down = total_entries > state.log_scroll_offset + max_vis
+    can_scroll_down = total_entries > state.log_scroll_offset + LOG_PANEL_MAX_VISIBLE
     if can_scroll_up:
-        draw.text((panel_w - 34, 16), "\u25b2", fill=(*CYAN, 255), font=font_scroll)
+        draw.text((panel_w - 34, 16), "▲", fill=(*CYAN, 255), font=font_scroll)
     if can_scroll_down:
-        draw.text((panel_w - 34, panel_h - 22), "\u25bc", fill=(*CYAN, 255), font=font_scroll)
+        draw.text((panel_w - 34, panel_h - 22), "▼", fill=(*CYAN, 255), font=font_scroll)
 
-    is_copied_fresh = state.copied_row is not None and (time.time() - state.copied_time) < 1.5
+    card_left = LOG_CARD_MARGIN_X
+    card_right = panel_w - LOG_CARD_MARGIN_X
+    text_left = card_left + LOG_CARD_PAD_X
 
-    y = LOG_HEADER_H + LOG_PANEL_PADDING
-    for idx, (entry, (wrapped_lines, row_h)) in enumerate(zip(entries, entry_layouts, strict=False)):
-        if y + row_h > panel_h:
+    for card in cards:
+        top = card.y
+        bottom = card.y + card.height
+        if bottom > panel_h:
             break
 
-        ts = entry.get("timestamp", "")
+        if not is_empty:
+            draw.rounded_rectangle(
+                [card_left, top, card_right, bottom],
+                radius=LOG_CARD_RADIUS,
+                fill=(*LOG_CARD_FILL, 255),
+                outline=(*LOG_CARD_BORDER, 255),
+                width=1,
+            )
+
+        # Primary content: the final (typed) text.
+        text_y = top + LOG_CARD_PAD_Y
+        for li, line in enumerate(card.lines):
+            draw.text((text_left, text_y + li * LOG_LINE_H), line,
+                      fill=(*WHITE, 255), font=font_text)
+
+        # Metadata row: timestamp + optional Enhanced badge.
+        meta_y = text_y + len(card.lines) * LOG_LINE_H + LOG_META_GAP
+        ts = card.entry.get("timestamp", "")
+        meta_x = text_left
         if ts:
-            draw.text((20, y + 12), ts, fill=(*GRAY, 200), font=font_ts)
+            draw.text((meta_x, meta_y + 2), ts, fill=(*GRAY, 200), font=font_meta)
+            meta_x += int(font_meta.getlength(ts)) + 12
+        if card.show_badge:
+            label = "Enhanced"
+            label_w = int(font_badge.getlength(label))
+            draw.rounded_rectangle(
+                [meta_x, meta_y, meta_x + label_w + 16, meta_y + LOG_META_H - 2],
+                radius=8, fill=(*LOG_BADGE_FILL, 255),
+            )
+            draw.text((meta_x + 8, meta_y + 2), label, fill=(*CYAN, 255), font=font_badge)
 
-        for li, line in enumerate(wrapped_lines):
-            draw.text((LOG_TEXT_LEFT, y + 10 + li * LOG_LINE_H), line,
-                       fill=(*WHITE, 255), font=font_text)
-
-        # Copy button: only for real transcriptions, visible on hover/copied
-        has_text = bool(entry.get("text")) and entry.get("time_epoch", 0) != 0
-        if has_text:
-            copy_x = panel_w - LOG_COPY_BTN_W - 8
-            btn_cy = y + row_h // 2
-            is_hover = (state.copy_hover_row == idx)
-            is_just_copied = (is_copied_fresh and state.copied_row == idx)
-
-            btn_hw = 19  # half-width
-            btn_hh = 18  # half-height
-
-            if is_just_copied:
-                draw.rounded_rectangle(
-                    [copy_x, btn_cy - btn_hh, copy_x + btn_hw * 2, btn_cy + btn_hh],
-                    radius=6, fill=(25, 50, 35, 255),
-                )
-                _draw_centered_text(draw, "\u2713", copy_x + btn_hw, btn_cy,
-                                    font_check, (40, 220, 80, 255))
-            elif is_hover:
-                draw.rounded_rectangle(
-                    [copy_x, btn_cy - btn_hh, copy_x + btn_hw * 2, btn_cy + btn_hh],
-                    radius=6, fill=(20, 35, 50, 255),
-                )
-                draw.rectangle([copy_x + 9, btn_cy - 11, copy_x + 21, btn_cy + 6],
-                                outline=(*CYAN, 255), width=2)
-                draw.rectangle([copy_x + 16, btn_cy - 7, copy_x + 28, btn_cy + 10],
-                                outline=(*CYAN, 255), width=2)
-
-        if idx < len(entries) - 1:
-            div_y = y + row_h - 1
-            draw.line([(20, div_y), (panel_w - 20, div_y)], fill=(*GRAY, 80))
-
-        y += row_h
+        # Always-visible copy control at the card's top-right.
+        if card.show_copy:
+            icon_cx = card_right - LOG_CARD_PAD_X - 8
+            icon_cy = top + LOG_CARD_PAD_Y + 6
+            _draw_copy_icon(draw, icon_cx, icon_cy, card.is_copied, font_check)
 
     return _rgba_to_premul_bgra(img), panel_w, panel_h
 

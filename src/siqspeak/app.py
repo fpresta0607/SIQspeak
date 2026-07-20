@@ -19,6 +19,7 @@ from siqspeak.config import (
     ACTIVE_H,
     ACTIVE_W,
     AVAILABLE_MODELS,
+    COPY_CONFIRM_SECONDS,
     ENHANCEMENT_MODEL,
     IDLE_H,
     IDLE_W,
@@ -47,7 +48,6 @@ from siqspeak.interaction.click_handlers import (
 from siqspeak.interaction.hover import (
     _handle_copy_click,
     _is_cursor_over_hwnd,
-    _update_copy_hover,
 )
 from siqspeak.logging_setup import configure_logging
 from siqspeak.overlay.panels import _hide_all_panels, _update_panel_content
@@ -263,17 +263,14 @@ def message_loop(state: AppState) -> None:
 
                 _handle_idle_pill_click(state)
 
-                # Handle clicks within active panels
+                # Handle clicks within active panels. Pointer movement has no
+                # render path — only a copy confirmation (or its expiry) redraws.
                 if state.active_panel == "info":
                     prev_copied = state.copied_row
                     _handle_copy_click(state)
-                    prev_copy_hover = state.copy_hover_row
-                    _update_copy_hover(state)
-                    needs_rerender = (
-                        state.copy_hover_row != prev_copy_hover
-                        or state.copied_row != prev_copied
-                    )
-                    if state.copied_row is not None and (time.time() - state.copied_time) >= 1.5:
+                    needs_rerender = state.copied_row != prev_copied
+                    if (state.copied_row is not None
+                            and (time.time() - state.copied_time) >= COPY_CONFIRM_SECONDS):
                         state.copied_row = None
                         needs_rerender = True
                     if needs_rerender:
