@@ -25,7 +25,7 @@ MAX_FINDINGS = 10  # returned finding count
 
 WORKSPACE_INSTRUCTION_FILES = ("CLAUDE.md", "AGENTS.md", "CODEX.md")
 
-_AGENT_INSTRUCTION = "agent_instruction"
+AGENT_INSTRUCTION = "agent_instruction"
 
 # Named workspace files beyond the agent-instruction set:
 # (filename, category, confidence).
@@ -40,56 +40,12 @@ _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
 @dataclass(frozen=True)
-class ContextSource:
-    label: str
-    text: str
-
-
-@dataclass(frozen=True)
 class ContextFinding:
     source_path: str
     category: str  # agent_instruction | architecture | implementation_pattern
     #               | tooling | constraint | verification
     text: str
     confidence: str  # high | medium | low
-
-
-def load_instruction_context(
-    workspace: Path | None,
-    home: Path | None,
-) -> tuple[ContextSource, ...]:
-    """Return bounded excerpts of project instruction files in priority order.
-
-    Workspace files (`CLAUDE.md`, `AGENTS.md`, `CODEX.md`) come first in that
-    order, then the global `~/.claude/CLAUDE.md`. Missing files are skipped.
-    """
-    sources: list[ContextSource] = []
-    if workspace is not None:
-        root = Path(workspace)
-        for filename in WORKSPACE_INSTRUCTION_FILES:
-            text = _read_bounded(root / filename, root=root)
-            if text is not None:
-                sources.append(ContextSource(label=filename, text=text))
-    if home is not None:
-        text = _read_bounded(Path(home) / ".claude" / "CLAUDE.md")
-        if text is not None:
-            sources.append(ContextSource(label="~/.claude/CLAUDE.md", text=text))
-    return tuple(sources)
-
-
-def load_workspace_context(
-    workspace: Path | None,
-    home: Path | None,
-) -> tuple[ContextSource, ...]:
-    """Return only the project instruction files as bounded context.
-
-    Thin wrapper over :func:`load_instruction_context`: workspace
-    ``CLAUDE.md``/``AGENTS.md``/``CODEX.md`` first, then the global
-    ``~/.claude/CLAUDE.md``. Plan docs are intentionally excluded to keep the
-    injected context focused on conventions and sources of truth rather than
-    diluting the model with large, task-specific narrative.
-    """
-    return load_instruction_context(workspace, home)
 
 
 def extract_context(
@@ -107,20 +63,20 @@ def extract_context(
     it never logs content and never raises — on any failure it returns whatever
     was safely gathered so far.
     """
-    request_tokens = _word_tokens(request)
     seen_paths: set[str] = set()
     seen_texts: set[str] = set()
     instruction: list[ContextFinding] = []
     scored: list[tuple[int, str, ContextFinding]] = []
 
     try:
+        request_tokens = _word_tokens(request)
         for finding in _discover(workspace, home):
             normalized = _normalize_text(finding.text)
             if finding.source_path in seen_paths or normalized in seen_texts:
                 continue
             seen_paths.add(finding.source_path)
             seen_texts.add(normalized)
-            if finding.category == _AGENT_INSTRUCTION:
+            if finding.category == AGENT_INSTRUCTION:
                 instruction.append(finding)
             else:
                 score = _score(request_tokens, finding)
@@ -130,11 +86,18 @@ def extract_context(
         pass
 
     scored.sort(key=lambda item: (-item[0], item[1]))
-    ordered = instruction + [finding for _, _, finding in scored]
 
     result: list[ContextFinding] = []
     total_chars = 0
-    for finding in ordered:
+    # Authoritative agent-instruction findings are ALWAYS kept (only MAX_FINDINGS
+    # bounds them); the total-chars budget must never silently drop them.
+    for finding in instruction:
+        if len(result) >= MAX_FINDINGS:
+            break
+        result.append(finding)
+        total_chars += len(finding.text)
+    # The ranked non-instruction tail is subject to the total-chars budget.
+    for _, _, finding in scored:
         if len(result) >= MAX_FINDINGS:
             break
         if total_chars + len(finding.text) > MAX_TOTAL_CHARS:
@@ -162,7 +125,6 @@ def _discover(workspace: Path | None, home: Path | None) -> list[ContextFinding]
         if text is None:
             return
         budget -= 1
-        text = text[:MAX_CHARS_PER_FILE]
         if not text.strip():
             return
         findings.append(ContextFinding(source_path, category, text, confidence))
@@ -170,11 +132,11 @@ def _discover(workspace: Path | None, home: Path | None) -> list[ContextFinding]
     if workspace is not None:
         root = Path(workspace)
         for filename in WORKSPACE_INSTRUCTION_FILES:
-            _add_file(root / filename, root, filename, _AGENT_INSTRUCTION, "high")
+            _add_file(root / filename, root, filename, AGENT_INSTRUCTION, "high")
 
     if home is not None:
         global_path = Path(home) / ".claude" / "CLAUDE.md"
-        _add_file(global_path, None, "~/.claude/CLAUDE.md", _AGENT_INSTRUCTION, "high")
+        _add_file(global_path, None, "~/.claude/CLAUDE.md", AGENT_INSTRUCTION, "high")
 
     if workspace is not None:
         root = Path(workspace)
@@ -188,8 +150,15 @@ def _discover(workspace: Path | None, home: Path | None) -> list[ContextFinding]
 
         docs_root = root / "docs"
         if docs_root.is_dir():
-            doc_paths = sorted(docs_root.rglob("*.md"), key=lambda entry: entry.as_posix())
-            for doc_path in doc_paths[:MAX_DOC_FILES]:
+            # Bound the walk: stop enumerating once MAX_DOC_FILES candidates are
+            # found so a huge docs tree can't be fully materialized, then sort the
+            # capped set for deterministic ordering.
+            candidates: list[Path] = []
+            for doc_path in docs_root.rglob("*.md"):
+                candidates.append(doc_path)
+                if len(candidates) >= MAX_DOC_FILES:
+                    break
+            for doc_path in sorted(candidates, key=lambda entry: entry.as_posix()):
                 if budget <= 0:
                     break
                 source_path = doc_path.relative_to(root).as_posix()
@@ -210,9 +179,11 @@ def _read_mcp(root: Path) -> ContextFinding | None:
     if not isinstance(data, dict):
         return None
     servers = data.get("mcpServers")
-    raw_keys = servers.keys() if isinstance(servers, dict) else data.keys()
+    if not isinstance(servers, dict):
+        # No recognizable server map — never fall back to leaking top-level keys.
+        return None
     names = sorted(
-        _CONTROL_RE.sub("", key).strip() for key in raw_keys if isinstance(key, str)
+        _CONTROL_RE.sub("", key).strip() for key in servers if isinstance(key, str)
     )
     names = [name for name in names if name]
     if not names:

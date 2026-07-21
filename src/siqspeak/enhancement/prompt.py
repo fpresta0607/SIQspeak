@@ -20,9 +20,30 @@ MAX_TOTAL_CHARS = 24000
 # (embedded newlines would submit as Enter in a focused terminal).
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
+# Defense-in-depth: brief free-text is model-generated from broad, untrusted
+# workspace docs and typed via SendInput. Neutralize obvious secret/exfil
+# patterns so a poisoned doc cannot smuggle a live key or pipe-to-shell command
+# into the typed output. Conservative by design — value, not context.
+_SECRET_PLACEHOLDER = "[redacted]"
+_EXFIL_RE = re.compile(
+    r"curl\s+\S+\s*\|\s*(?:sh|bash)"  # curl ... | sh
+    r"|wget\s+\S+\s*\|"               # wget ... |
+    r"|-----BEGIN"                    # PEM private-key header
+    r"|AKIA[0-9A-Z]{8,}"             # AWS access key id
+    r"|\bsk-\S+"                      # OpenAI-style secret key
+    r"|ghp_\S+"                       # GitHub personal access token
+    r"|xox[baprs]-\S+"              # Slack token
+    r"|Bearer\s+\S+",                # Authorization bearer token
+    re.IGNORECASE,
+)
+
+
+def _scrub(value: str) -> str:
+    return _EXFIL_RE.sub(_SECRET_PLACEHOLDER, value)
+
 
 def _clean(value: str) -> str:
-    return _CONTROL_RE.sub(" ", value).strip()
+    return _scrub(_CONTROL_RE.sub(" ", value)).strip()
 
 
 SYSTEM_MESSAGE = (
@@ -122,7 +143,10 @@ def build_prompt_brief(
         system_architecture_findings=_validated_list(payload, "system_architecture_findings"),
         implementation_requirements=_validated_list(payload, "implementation_requirements"),
         non_goals=_validated_list(payload, "non_goals"),
-        sources_of_truth=_validated_list(payload, "sources_of_truth"),
+        # Lenient like ``selected_skills``: the service unconditionally overrides
+        # ``sources_of_truth`` with the real provided finding paths, so a
+        # malformed value here must not sink an otherwise-valid brief.
+        sources_of_truth=_lenient_list(payload, "sources_of_truth"),
         investigation_path=_validated_list(payload, "investigation_path"),
         acceptance_criteria=_validated_list(payload, "acceptance_criteria"),
         verification=_validated_list(payload, "verification"),
@@ -198,6 +222,26 @@ def _validated_list(payload: dict[str, object], key: str) -> tuple[str, ...]:
     for entry in value[:MAX_LIST_ITEMS]:
         if not isinstance(entry, str):
             raise PromptValidationError(f"field {key!r} items must be strings")
+        text = _clean(entry)
+        if text:
+            items.append(text[:MAX_TEXT_CHARS])
+    return tuple(items)
+
+
+def _lenient_list(payload: dict[str, object], key: str) -> tuple[str, ...]:
+    """Best-effort list parse that never raises — for downstream-overridden fields.
+
+    Missing key, non-list value, and non-string items are tolerated (skipped)
+    rather than rejected. Valid string items are still cleaned, clamped and
+    deduped of blanks, so a well-formed value survives unchanged.
+    """
+    value = payload.get(key)
+    if not isinstance(value, list):
+        return ()
+    items: list[str] = []
+    for entry in value[:MAX_LIST_ITEMS]:
+        if not isinstance(entry, str):
+            continue
         text = _clean(entry)
         if text:
             items.append(text[:MAX_TEXT_CHARS])

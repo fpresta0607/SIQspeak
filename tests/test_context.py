@@ -7,21 +7,13 @@ import pytest
 
 from siqspeak.enhancement.context import (
     MAX_CHARS_PER_FILE,
-    MAX_CONTEXT_BYTES,
     MAX_FILES,
     MAX_FINDINGS,
     MAX_TOTAL_CHARS,
     ContextFinding,
-    ContextSource,
     _is_within,
     extract_context,
-    load_instruction_context,
-    load_workspace_context,
 )
-
-
-def _labels(sources: tuple[ContextSource, ...]) -> list[str]:
-    return [source.label for source in sources]
 
 
 def _symlink_or_skip(link: Path, target: Path) -> None:
@@ -35,124 +27,6 @@ def _write_global(home: Path, text: str) -> None:
     global_dir = home / ".claude"
     global_dir.mkdir(parents=True, exist_ok=True)
     (global_dir / "CLAUDE.md").write_text(text, encoding="utf-8")
-
-
-def test_workspace_files_discovered_in_priority_order(tmp_path: Path) -> None:
-    (tmp_path / "CLAUDE.md").write_text("claude", encoding="utf-8")
-    (tmp_path / "AGENTS.md").write_text("agents", encoding="utf-8")
-    (tmp_path / "CODEX.md").write_text("codex", encoding="utf-8")
-
-    sources = load_instruction_context(workspace=tmp_path, home=None)
-
-    assert _labels(sources) == ["CLAUDE.md", "AGENTS.md", "CODEX.md"]
-    assert [source.text for source in sources] == ["claude", "agents", "codex"]
-
-
-def test_global_file_included_after_workspace(tmp_path: Path) -> None:
-    workspace = tmp_path / "ws"
-    workspace.mkdir()
-    home = tmp_path / "home"
-    (workspace / "CLAUDE.md").write_text("ws", encoding="utf-8")
-    _write_global(home, "global")
-
-    sources = load_instruction_context(workspace=workspace, home=home)
-
-    assert _labels(sources) == ["CLAUDE.md", "~/.claude/CLAUDE.md"]
-    assert sources[-1].text == "global"
-
-
-def test_missing_files_are_skipped(tmp_path: Path) -> None:
-    (tmp_path / "AGENTS.md").write_text("only agents", encoding="utf-8")
-
-    sources = load_instruction_context(workspace=tmp_path, home=None)
-
-    assert _labels(sources) == ["AGENTS.md"]
-
-
-def test_workspace_none_returns_only_global(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    _write_global(home, "global only")
-
-    sources = load_instruction_context(workspace=None, home=home)
-
-    assert _labels(sources) == ["~/.claude/CLAUDE.md"]
-    assert sources[0].text == "global only"
-
-
-def test_workspace_none_and_no_global_returns_empty(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-
-    sources = load_instruction_context(workspace=None, home=home)
-
-    assert sources == ()
-
-
-def test_byte_cap_truncates_large_file(tmp_path: Path) -> None:
-    (tmp_path / "CLAUDE.md").write_text("a" * (MAX_CONTEXT_BYTES * 2), encoding="utf-8")
-
-    sources = load_instruction_context(workspace=tmp_path, home=None)
-
-    assert len(sources) == 1
-    assert len(sources[0].text) <= MAX_CONTEXT_BYTES
-    assert len(sources[0].text) == MAX_CONTEXT_BYTES
-
-
-def test_nul_bytes_are_stripped(tmp_path: Path) -> None:
-    (tmp_path / "CLAUDE.md").write_bytes(b"clean\x00text\x00here")
-
-    sources = load_instruction_context(workspace=tmp_path, home=None)
-
-    assert sources[0].text == "cleantexthere"
-
-
-def test_newlines_and_markdown_preserved(tmp_path: Path) -> None:
-    content = "# Heading\n\n- item one\n- item two\n"
-    (tmp_path / "CLAUDE.md").write_bytes(content.encode("utf-8"))
-
-    sources = load_instruction_context(workspace=tmp_path, home=None)
-
-    assert sources[0].text == content
-
-
-def test_empty_result_when_nothing_exists(tmp_path: Path) -> None:
-    sources = load_instruction_context(workspace=tmp_path, home=None)
-
-    assert sources == ()
-
-
-def test_workspace_context_returns_instruction_files_only(tmp_path: Path) -> None:
-    workspace = tmp_path / "ws"
-    workspace.mkdir()
-    home = tmp_path / "home"
-    (workspace / "CLAUDE.md").write_text("claude", encoding="utf-8")
-    _write_global(home, "global")
-
-    sources = load_workspace_context(workspace=workspace, home=home)
-
-    assert _labels(sources) == ["CLAUDE.md", "~/.claude/CLAUDE.md"]
-    assert sources[0].text == "claude"
-
-
-def test_workspace_context_excludes_plan_docs(tmp_path: Path) -> None:
-    (tmp_path / "CLAUDE.md").write_text("claude", encoding="utf-8")
-    plans_dir = tmp_path / "docs" / "plans"
-    plans_dir.mkdir(parents=True)
-    (plans_dir / "big-plan.md").write_text("a" * (MAX_CONTEXT_BYTES * 2), encoding="utf-8")
-
-    sources = load_workspace_context(workspace=tmp_path, home=None)
-
-    # Only the instruction file — plan-doc bloat is no longer injected.
-    assert _labels(sources) == ["CLAUDE.md"]
-
-
-def test_workspace_context_none_workspace_returns_only_global(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    _write_global(home, "global only")
-
-    sources = load_workspace_context(workspace=None, home=home)
-
-    assert _labels(sources) == ["~/.claude/CLAUDE.md"]
 
 
 def test_is_within_rejects_out_of_root_paths(tmp_path: Path) -> None:
@@ -174,9 +48,9 @@ def test_symlinked_instruction_file_is_skipped(tmp_path: Path) -> None:
     secret.write_text("out of root", encoding="utf-8")
     _symlink_or_skip(workspace / "CLAUDE.md", secret)
 
-    sources = load_instruction_context(workspace=workspace, home=None)
+    findings = extract_context("anything", workspace=workspace, home=None)
 
-    assert sources == ()
+    assert findings == ()
 
 
 # --- extract_context: rich extraction with provenance, ranking, bounds ---
@@ -365,3 +239,49 @@ def test_extract_skips_symlinked_doc(tmp_path: Path) -> None:
 
     assert "docs/link.md" not in _paths(findings)
     assert all("secret payload" not in f.text for f in findings)
+
+
+def test_extract_keeps_all_instruction_findings_over_budget(tmp_path: Path) -> None:
+    # Four authoritative instruction files, each capped at MAX_CHARS_PER_FILE and
+    # collectively far larger than MAX_TOTAL_CHARS. The total-chars budget must
+    # NOT drop any of them — instruction findings are always kept.
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    home = tmp_path / "home"
+    for filename in ("CLAUDE.md", "AGENTS.md", "CODEX.md"):
+        (workspace / filename).write_text(
+            f"{filename} rules " * 4000, encoding="utf-8"
+        )
+    _write_global(home, "global rules " * 4000)
+
+    findings = extract_context("anything", workspace=workspace, home=home)
+    paths = _paths(findings)
+
+    total = sum(len(f.text) for f in findings)
+    assert total > MAX_TOTAL_CHARS  # oversized on purpose
+    for expected in ("CLAUDE.md", "AGENTS.md", "CODEX.md", "~/.claude/CLAUDE.md"):
+        assert expected in paths, expected
+
+
+def test_extract_never_raises_on_non_str_request(tmp_path: Path) -> None:
+    # A non-str request must be handled gracefully (best-effort), never raised.
+    (tmp_path / "CLAUDE.md").write_text("rules", encoding="utf-8")
+
+    findings = extract_context(None, workspace=tmp_path, home=None)  # type: ignore[arg-type]
+
+    assert findings == ()
+
+
+def test_extract_mcp_without_server_map_is_skipped(tmp_path: Path) -> None:
+    # No ``mcpServers`` map: never fall back to leaking top-level JSON keys.
+    (tmp_path / ".mcp.json").write_text(
+        '{"someSecretKey": "value", "another": {"nested": true}}',
+        encoding="utf-8",
+    )
+    (tmp_path / "CLAUDE.md").write_text("rules", encoding="utf-8")
+
+    findings = extract_context("secret", workspace=tmp_path, home=None)
+    paths = _paths(findings)
+
+    assert ".mcp.json" not in paths
+    assert all("someSecretKey" not in f.text for f in findings)

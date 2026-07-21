@@ -10,7 +10,7 @@ import logging
 from dataclasses import replace
 from typing import Protocol
 
-from siqspeak.enhancement.context import ContextFinding
+from siqspeak.enhancement.context import AGENT_INSTRUCTION, ContextFinding
 from siqspeak.enhancement.prompt import (
     PROMPT_SCHEMA,
     SYSTEM_MESSAGE,
@@ -34,8 +34,6 @@ ERROR_FAILED = "enhancement_failed"
 # bounded upstream; this caps the COMBINED trust-tier blocks so the prompt
 # cannot balloon regardless of how many findings arrive.
 MAX_CONTEXT_MESSAGE_CHARS = 64 * 1024
-
-_AGENT_INSTRUCTION = "agent_instruction"
 
 # Distinct trust-tier labels. Authoritative instructions state project
 # conventions to follow; retrieved evidence is reference-only. Both are
@@ -121,8 +119,8 @@ def _build_messages(
     messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_MESSAGE}]
 
     # Trust tiers as DISTINCT messages, sharing one combined size ceiling.
-    instruction = [f for f in context if f.category == _AGENT_INSTRUCTION]
-    evidence = [f for f in context if f.category != _AGENT_INSTRUCTION]
+    instruction = [f for f in context if f.category == AGENT_INSTRUCTION]
+    evidence = [f for f in context if f.category != AGENT_INSTRUCTION]
     budget = MAX_CONTEXT_MESSAGE_CHARS
     authoritative = _findings_message(_AUTHORITATIVE_LABEL, instruction, budget)
     if authoritative is not None:
