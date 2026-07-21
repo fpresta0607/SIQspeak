@@ -122,6 +122,9 @@ class AppState:
     enhancement_pull_progress: float = 0.0
     workspace_override: str | None = None
     workspace_detected_root: str | None = None
+    # Live workspace indicator bookkeeping (message-loop only)
+    last_external_hwnd: int | None = None  # last focused non-SIQspeak window
+    _last_resolved_hwnd: int | None = None  # hwnd we last ran resolve_workspace for
     skill_catalog: list[dict] = field(default_factory=list)
     enhance_prompt: EnhancePrompt | None = None  # injected boundary; None disables enhancement
 
