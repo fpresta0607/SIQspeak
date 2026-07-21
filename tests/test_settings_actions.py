@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from siqspeak.app import _should_resolve
 from siqspeak.config import _load_config
 from siqspeak.interaction import click_handlers
 from siqspeak.interaction.click_handlers import (
@@ -17,6 +18,22 @@ from siqspeak.interaction.click_handlers import (
 )
 from siqspeak.state import AppState
 from siqspeak.win32 import folder_dialog
+
+
+@pytest.mark.parametrize(
+    ("last_external", "last_resolved", "expected"),
+    [
+        (None, None, False),        # nothing focused yet
+        (100, None, True),          # first focus -> resolve once
+        (100, 100, False),          # same window -> skip
+        (200, 100, True),           # switched window -> resolve again
+        (None, 100, False),         # lost focus, keep last resolve sticky
+    ],
+)
+def test_should_resolve_only_on_window_change(
+    last_external: int | None, last_resolved: int | None, expected: bool,
+) -> None:
+    assert _should_resolve(last_external, last_resolved) is expected
 
 
 @pytest.fixture

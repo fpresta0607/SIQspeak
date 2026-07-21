@@ -13,6 +13,7 @@ from siqspeak.overlay.panels.settings_panel import (
     _render_settings_panel,
     _settings_layout,
     _settings_panel_height,
+    _settings_render_signature,
     _status_display,
     _workspace_display,
     settings_action_at_y,
@@ -95,6 +96,24 @@ def test_workspace_display_not_detected() -> None:
     assert status == "Auto"
     assert path.startswith("Not detected yet")
     assert "focused window" in path
+
+
+def test_render_signature_changes_when_detected_workspace_changes() -> None:
+    state = AppState()
+    before = _settings_render_signature(state)
+
+    state.workspace_detected_root = r"C:\dev\repo"
+
+    assert _settings_render_signature(state) != before
+
+
+def test_render_signature_changes_when_workspace_override_changes() -> None:
+    state = AppState()
+    before = _settings_render_signature(state)
+
+    state.workspace_override = r"C:\dev\manual"
+
+    assert _settings_render_signature(state) != before
 
 
 @pytest.mark.parametrize(

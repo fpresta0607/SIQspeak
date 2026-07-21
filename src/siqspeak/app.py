@@ -73,6 +73,7 @@ from siqspeak.win32.window import (
     _create_idle_overlay,
     _create_panel_window,
     _update_layered_window,
+    window_title,
 )
 
 log = logging.getLogger("siqspeak")
@@ -115,6 +116,15 @@ def _recover_after_sleep(state: AppState) -> None:
     install_mouse_hook(state)
     if state.mouse_hook:
         log.info("Mouse hook reinstalled after sleep")
+
+
+def _should_resolve(last_external: int | None, last_resolved: int | None) -> bool:
+    """True when the focused external window changed since the last resolve.
+
+    Gates the expensive workspace resolve so it runs only on a window switch,
+    not on every ~30fps timer tick.
+    """
+    return last_external is not None and last_external != last_resolved
 
 
 def message_loop(state: AppState) -> None:
@@ -243,6 +253,30 @@ def message_loop(state: AppState) -> None:
                 _recover_after_sleep(state)
 
         elif msg.message == WM_TIMER:
+            # Live workspace indicator: track the last focused non-SIQspeak window
+            # cheaply every tick (GetForegroundWindow + set membership); resolve its
+            # project only when that window actually changes.
+            fg = user32.GetForegroundWindow()
+            own_hwnds = {
+                state.idle_overlay_hwnd, state.active_overlay_hwnd,
+                state.log_panel_hwnd, state.model_panel_hwnd,
+                state.settings_panel_hwnd, state.welcome_hwnd,
+            }
+            if fg and fg not in own_hwnds:
+                state.last_external_hwnd = fg
+            if _should_resolve(state.last_external_hwnd, state._last_resolved_hwnd):
+                try:
+                    title = window_title(state.last_external_hwnd)
+                    workspace = resolve_workspace(
+                        state.workspace_override, title, state.last_external_hwnd,
+                    )
+                    # Sticky: only overwrite on a positive detection.
+                    if workspace:
+                        state.workspace_detected_root = str(workspace)
+                except Exception:
+                    log.debug("live workspace resolve failed", exc_info=True)
+                state._last_resolved_hwnd = state.last_external_hwnd
+
             # Animate active states
             if current_state != "idle":
                 phase += 0.1
