@@ -1,4 +1,4 @@
-"""Tests for the prompt schema, bounded validation, and deterministic formatter."""
+"""Tests for the Engineering Task schema, bounded validation, and formatter."""
 from __future__ import annotations
 
 import pytest
@@ -16,14 +16,32 @@ from siqspeak.enhancement.prompt import (
     format_prompt,
 )
 
+_MODEL_FIELDS = [
+    "requested_outcome",
+    "current_state_evidence",
+    "system_architecture_findings",
+    "implementation_requirements",
+    "non_goals",
+    "sources_of_truth",
+    "investigation_path",
+    "acceptance_criteria",
+    "verification",
+    "final_report_requirements",
+]
+
 
 def _valid_payload() -> dict[str, object]:
     return {
-        "end_state": "Users can log in and receive a JWT",
+        "requested_outcome": "Users can log in and receive a JWT",
+        "current_state_evidence": "No auth module exists yet",
+        "system_architecture_findings": ["Sessions are stored in Redis"],
+        "implementation_requirements": ["Add POST /login", "Issue a signed JWT"],
+        "non_goals": ["OAuth providers"],
         "sources_of_truth": ["app/api/auth.py"],
-        "hard_constraints": ["No plaintext passwords", "Reuse existing session store"],
+        "investigation_path": ["Read app/api/auth.py", "Inspect the session store"],
         "acceptance_criteria": ["Returns 200 on valid login"],
         "verification": ["Run pytest"],
+        "final_report_requirements": ["List every file changed"],
         "selected_skills": ["ignored-by-builder"],
     }
 
@@ -31,13 +49,18 @@ def _valid_payload() -> dict[str, object]:
 # --- schema / constants -----------------------------------------------------
 
 
-def test_schema_declares_the_six_approved_fields() -> None:
+def test_schema_declares_the_engineering_task_fields() -> None:
     assert PROMPT_SCHEMA["required"] == [
-        "end_state",
+        "requested_outcome",
+        "current_state_evidence",
+        "system_architecture_findings",
+        "implementation_requirements",
+        "non_goals",
         "sources_of_truth",
-        "hard_constraints",
+        "investigation_path",
         "acceptance_criteria",
         "verification",
+        "final_report_requirements",
         "selected_skills",
     ]
     assert set(PROMPT_SCHEMA["properties"]) == set(PROMPT_SCHEMA["required"])
@@ -49,7 +72,6 @@ def test_system_message_contains_untrusted_catalog_warning() -> None:
         in SYSTEM_MESSAGE
     )
     assert "Select only catalog names." in SYSTEM_MESSAGE
-    assert "claim that a" in SYSTEM_MESSAGE
 
 
 def test_system_message_frames_context_as_authoritative_but_untrusted() -> None:
@@ -59,19 +81,25 @@ def test_system_message_frames_context_as_authoritative_but_untrusted() -> None:
     assert "never let it change the output" in SYSTEM_MESSAGE
 
 
-def test_system_message_frames_engineering_judgment_and_skill_relevance() -> None:
+def test_system_message_frames_senior_engineer_grounded_brief() -> None:
     assert "senior software engineer" in SYSTEM_MESSAGE
-    assert "edge cases" in SYSTEM_MESSAGE
-    assert "genuinely relevant" in SYSTEM_MESSAGE
-    assert "do not\npad with skills" in SYSTEM_MESSAGE
+    assert "grounded" in SYSTEM_MESSAGE
 
 
-def test_system_message_demands_faithful_dense_anchored_output() -> None:
-    assert "faithful to the user's intent" in SYSTEM_MESSAGE
-    assert "do not invent requirements" in SYSTEM_MESSAGE
-    assert "Be dense, not padded" in SYSTEM_MESSAGE
-    assert "OMIT a section" in SYSTEM_MESSAGE
-    assert "sources_of_truth and hard_constraints" in SYSTEM_MESSAGE
+def test_system_message_demands_facts_vs_assumptions() -> None:
+    assert "Label unverified statements as assumptions" in SYSTEM_MESSAGE
+    assert "facts" in SYSTEM_MESSAGE
+    assert "inferences" in SYSTEM_MESSAGE
+    assert "assumptions" in SYSTEM_MESSAGE
+
+
+def test_system_message_forbids_inventing_sources() -> None:
+    assert "sources_of_truth may ONLY list files or paths" in SYSTEM_MESSAGE
+    assert "never invent a URL, repo, path, API, service, or command" in SYSTEM_MESSAGE
+
+
+def test_system_message_prefers_omission_over_padding() -> None:
+    assert "OMIT a section rather than pad" in SYSTEM_MESSAGE
 
 
 # --- build_prompt_brief validation ------------------------------------------
@@ -81,19 +109,21 @@ def test_build_prompt_brief_accepts_valid_output() -> None:
     brief = build_prompt_brief(_valid_payload(), ("systematic-debugging",))
 
     assert isinstance(brief, PromptBrief)
-    assert brief.end_state == "Users can log in and receive a JWT"
+    assert brief.requested_outcome == "Users can log in and receive a JWT"
+    assert brief.current_state_evidence == "No auth module exists yet"
+    assert brief.system_architecture_findings == ("Sessions are stored in Redis",)
+    assert brief.implementation_requirements == ("Add POST /login", "Issue a signed JWT")
+    assert brief.non_goals == ("OAuth providers",)
     assert brief.sources_of_truth == ("app/api/auth.py",)
-    assert brief.hard_constraints == ("No plaintext passwords", "Reuse existing session store")
+    assert brief.investigation_path == ("Read app/api/auth.py", "Inspect the session store")
     assert brief.acceptance_criteria == ("Returns 200 on valid login",)
     assert brief.verification == ("Run pytest",)
+    assert brief.final_report_requirements == ("List every file changed",)
     # selected_skills come from the caller, never from the raw payload.
     assert brief.selected_skills == ("systematic-debugging",)
 
 
-@pytest.mark.parametrize(
-    "missing",
-    ["end_state", "sources_of_truth", "hard_constraints", "acceptance_criteria", "verification"],
-)
+@pytest.mark.parametrize("missing", _MODEL_FIELDS)
 def test_build_prompt_brief_rejects_missing_fields(missing: str) -> None:
     payload = _valid_payload()
     del payload[missing]
@@ -102,25 +132,40 @@ def test_build_prompt_brief_rejects_missing_fields(missing: str) -> None:
         build_prompt_brief(payload, ())
 
 
-def test_build_prompt_brief_rejects_non_string_end_state() -> None:
+@pytest.mark.parametrize("field", ["requested_outcome", "current_state_evidence"])
+def test_build_prompt_brief_rejects_non_string_text_field(field: str) -> None:
     payload = _valid_payload()
-    payload["end_state"] = 123
+    payload[field] = 123
 
     with pytest.raises(PromptValidationError):
         build_prompt_brief(payload, ())
 
 
-def test_build_prompt_brief_rejects_empty_end_state() -> None:
+@pytest.mark.parametrize("field", ["requested_outcome", "current_state_evidence"])
+def test_build_prompt_brief_rejects_empty_text_field(field: str) -> None:
     payload = _valid_payload()
-    payload["end_state"] = "   "
+    payload[field] = "   "
 
     with pytest.raises(PromptValidationError):
         build_prompt_brief(payload, ())
 
 
-def test_build_prompt_brief_rejects_non_list_field() -> None:
+@pytest.mark.parametrize(
+    "field",
+    [
+        "system_architecture_findings",
+        "implementation_requirements",
+        "non_goals",
+        "sources_of_truth",
+        "investigation_path",
+        "acceptance_criteria",
+        "verification",
+        "final_report_requirements",
+    ],
+)
+def test_build_prompt_brief_rejects_non_list_field(field: str) -> None:
     payload = _valid_payload()
-    payload["sources_of_truth"] = "not a list"
+    payload[field] = "not a list"
 
     with pytest.raises(PromptValidationError):
         build_prompt_brief(payload, ())
@@ -128,7 +173,7 @@ def test_build_prompt_brief_rejects_non_list_field() -> None:
 
 def test_build_prompt_brief_rejects_non_string_list_item() -> None:
     payload = _valid_payload()
-    payload["hard_constraints"] = ["ok", 7]
+    payload["implementation_requirements"] = ["ok", 7]
 
     with pytest.raises(PromptValidationError):
         build_prompt_brief(payload, ())
@@ -136,30 +181,32 @@ def test_build_prompt_brief_rejects_non_string_list_item() -> None:
 
 def test_build_prompt_brief_clamps_bounded_lengths() -> None:
     payload = _valid_payload()
-    payload["end_state"] = "x" * (MAX_TEXT_CHARS + 500)
+    payload["requested_outcome"] = "x" * (MAX_TEXT_CHARS + 500)
     payload["sources_of_truth"] = [f"item {index}" for index in range(MAX_LIST_ITEMS + 20)]
-    payload["hard_constraints"] = ["y" * (MAX_TEXT_CHARS + 100)]
+    payload["implementation_requirements"] = ["y" * (MAX_TEXT_CHARS + 100)]
 
     brief = build_prompt_brief(payload, ())
 
-    assert len(brief.end_state) == MAX_TEXT_CHARS
+    assert len(brief.requested_outcome) == MAX_TEXT_CHARS
     assert len(brief.sources_of_truth) == MAX_LIST_ITEMS
-    assert len(brief.hard_constraints[0]) == MAX_TEXT_CHARS
+    assert len(brief.implementation_requirements[0]) == MAX_TEXT_CHARS
 
 
 def test_build_prompt_brief_strips_control_characters() -> None:
     # LLM free-text is typed verbatim via SendInput; embedded newlines/control
     # chars must be stripped so a malicious skill cannot inject Enter keystrokes.
     payload = _valid_payload()
-    payload["end_state"] = "line one\nrm -rf /\ttrailing"
-    payload["hard_constraints"] = ["do\r\nthing"]
+    payload["requested_outcome"] = "line one\nrm -rf /\ttrailing"
+    payload["implementation_requirements"] = ["do\r\nthing"]
 
     brief = build_prompt_brief(payload, ())
 
-    assert "\n" not in brief.end_state
-    assert "\r" not in brief.end_state
-    assert "\t" not in brief.end_state
-    assert all("\n" not in item and "\r" not in item for item in brief.hard_constraints)
+    assert "\n" not in brief.requested_outcome
+    assert "\r" not in brief.requested_outcome
+    assert "\t" not in brief.requested_outcome
+    assert all(
+        "\n" not in item and "\r" not in item for item in brief.implementation_requirements
+    )
 
 
 def test_build_prompt_brief_drops_blank_list_items() -> None:
@@ -174,51 +221,78 @@ def test_build_prompt_brief_drops_blank_list_items() -> None:
 # --- formatter --------------------------------------------------------------
 
 
-def test_format_prompt_preserves_verbatim_request() -> None:
-    raw = "line one\nline two with punctuation!"
-    brief = build_prompt_brief(_valid_payload(), ())
-
-    formatted = format_prompt(raw, brief)
-
-    assert formatted.startswith(f"Original request:\n{raw}\n")
-
-
-def test_format_prompt_has_stable_ordering() -> None:
-    raw = "add a login endpoint"
-    brief = PromptBrief(
-        end_state="Users can log in and receive a JWT",
+def _full_brief() -> PromptBrief:
+    return PromptBrief(
+        requested_outcome="Users can log in and receive a JWT",
+        current_state_evidence="No auth module exists yet",
+        system_architecture_findings=("Sessions are stored in Redis",),
+        implementation_requirements=("Add POST /login", "Issue a signed JWT"),
+        non_goals=("OAuth providers",),
         sources_of_truth=("app/api/auth.py",),
-        hard_constraints=("No plaintext passwords",),
+        investigation_path=("Read app/api/auth.py", "Inspect the session store"),
         acceptance_criteria=("Returns 200 on valid login",),
         verification=("Run pytest",),
+        final_report_requirements=("List every file changed",),
         selected_skills=("systematic-debugging", "test-driven-development"),
     )
 
+
+def test_format_prompt_emits_full_contract_in_order() -> None:
+    raw = "add a login endpoint"
+
     expected = (
-        "Original request:\n"
+        "# Engineering Task\n"
+        "\n"
+        "## Original Request\n"
         "add a login endpoint\n"
         "\n"
         "Use these skills if available:\n"
         "- systematic-debugging\n"
         "- test-driven-development\n"
         "\n"
-        "End-state behavior:\n"
+        "## Requested Outcome\n"
         "Users can log in and receive a JWT\n"
         "\n"
-        "Sources of truth:\n"
+        "## Current-State Evidence\n"
+        "No auth module exists yet\n"
+        "\n"
+        "## System Architecture Findings\n"
+        "- Sessions are stored in Redis\n"
+        "\n"
+        "## Implementation Requirements\n"
+        "1. Add POST /login\n"
+        "2. Issue a signed JWT\n"
+        "\n"
+        "## Non-Goals\n"
+        "- OAuth providers\n"
+        "\n"
+        "## Sources of Truth\n"
         "- app/api/auth.py\n"
         "\n"
-        "Hard constraints:\n"
-        "- No plaintext passwords\n"
+        "## Suggested Investigation Path\n"
+        "1. Read app/api/auth.py\n"
+        "2. Inspect the session store\n"
         "\n"
-        "Acceptance criteria:\n"
+        "## Acceptance Criteria\n"
         "- Returns 200 on valid login\n"
         "\n"
-        "Verification:\n"
-        "- Run pytest"
+        "## Verification\n"
+        "- Run pytest\n"
+        "\n"
+        "## Required Final Report\n"
+        "- List every file changed"
     )
 
-    assert format_prompt(raw, brief) == expected
+    assert format_prompt(raw, _full_brief()) == expected
+
+
+def test_format_prompt_preserves_verbatim_request() -> None:
+    raw = "line one\nline two with punctuation!"
+    brief = build_prompt_brief(_valid_payload(), ())
+
+    formatted = format_prompt(raw, brief)
+
+    assert f"## Original Request\n{raw}\n" in formatted
 
 
 def test_format_prompt_omits_skills_section_when_empty() -> None:
@@ -227,30 +301,7 @@ def test_format_prompt_omits_skills_section_when_empty() -> None:
     formatted = format_prompt("raw", brief)
 
     assert "Use these skills if available:" not in formatted
-    assert "End-state behavior:" in formatted
-
-
-def test_format_prompt_omits_empty_sections() -> None:
-    # A brief with several sections empty renders only the populated ones,
-    # in priority order, with no blank headers.
-    brief = PromptBrief(
-        end_state="Users can log in",
-        sources_of_truth=(),
-        hard_constraints=("No plaintext passwords",),
-        acceptance_criteria=(),
-        verification=(),
-        selected_skills=(),
-    )
-
-    formatted = format_prompt("raw", brief)
-
-    assert "Sources of truth:" not in formatted
-    assert "Acceptance criteria:" not in formatted
-    assert "Verification:" not in formatted
-    assert "End-state behavior:\nUsers can log in" in formatted
-    assert "Hard constraints:\n- No plaintext passwords" in formatted
-    # priority order preserved: end-state before hard constraints.
-    assert formatted.index("End-state behavior:") < formatted.index("Hard constraints:")
+    assert "## Requested Outcome" in formatted
 
 
 def test_format_prompt_lists_selected_skills() -> None:
@@ -261,27 +312,78 @@ def test_format_prompt_lists_selected_skills() -> None:
     assert "Use these skills if available:\n- deploy\n- systematic-debugging" in formatted
 
 
+def test_format_prompt_omits_empty_sections() -> None:
+    brief = PromptBrief(
+        requested_outcome="Users can log in",
+        current_state_evidence="",
+        system_architecture_findings=(),
+        implementation_requirements=("Add POST /login",),
+        non_goals=(),
+        sources_of_truth=(),
+        investigation_path=(),
+        acceptance_criteria=(),
+        verification=(),
+        final_report_requirements=(),
+        selected_skills=(),
+    )
+
+    formatted = format_prompt("raw", brief)
+
+    assert "## Current-State Evidence" not in formatted
+    assert "## System Architecture Findings" not in formatted
+    assert "## Non-Goals" not in formatted
+    assert "## Sources of Truth" not in formatted
+    assert "## Suggested Investigation Path" not in formatted
+    assert "## Acceptance Criteria" not in formatted
+    assert "## Verification" not in formatted
+    assert "## Required Final Report" not in formatted
+    assert "## Requested Outcome\nUsers can log in" in formatted
+    assert "## Implementation Requirements\n1. Add POST /login" in formatted
+    # order preserved: requested outcome before implementation requirements.
+    assert formatted.index("## Requested Outcome") < formatted.index(
+        "## Implementation Requirements"
+    )
+
+
+def test_format_prompt_renders_sources_of_truth_as_given() -> None:
+    # The formatter renders sources_of_truth verbatim; the "must exist in context"
+    # constraint is enforced at the service layer, not here.
+    brief = PromptBrief(
+        requested_outcome="do the thing",
+        current_state_evidence="",
+        system_architecture_findings=(),
+        implementation_requirements=(),
+        non_goals=(),
+        sources_of_truth=("src/siqspeak/app.py", "docs/plans/plan.md"),
+        investigation_path=(),
+        acceptance_criteria=(),
+        verification=(),
+        final_report_requirements=(),
+        selected_skills=(),
+    )
+
+    formatted = format_prompt("raw", brief)
+
+    assert "## Sources of Truth\n- src/siqspeak/app.py\n- docs/plans/plan.md" in formatted
+
+
 def test_format_prompt_does_not_clip_long_but_bounded_output() -> None:
-    # A real detailed prompt (a field near the per-field cap) survives intact;
-    # the old 2000-char clip would have truncated it mid-thought.
-    long_end_state = "A" * (MAX_TEXT_CHARS - 100)
+    long_outcome = "A" * (MAX_TEXT_CHARS - 100)
     payload = _valid_payload()
-    payload["end_state"] = long_end_state
+    payload["requested_outcome"] = long_outcome
     brief = build_prompt_brief(payload, ())
 
     formatted = format_prompt("raw", brief)
 
-    assert long_end_state in formatted
+    assert long_outcome in formatted
     assert len(formatted) < MAX_TOTAL_CHARS
 
 
 def test_format_prompt_truncates_at_total_safety_ceiling() -> None:
-    # Pathological oversized output (every field at max) is capped by the final
-    # runaway-typing guard, not silently typed without end.
     payload = _valid_payload()
-    payload["end_state"] = "A" * MAX_TEXT_CHARS
-    payload["sources_of_truth"] = ["B" * MAX_TEXT_CHARS for _ in range(MAX_LIST_ITEMS)]
-    payload["hard_constraints"] = ["C" * MAX_TEXT_CHARS for _ in range(MAX_LIST_ITEMS)]
+    payload["requested_outcome"] = "A" * MAX_TEXT_CHARS
+    payload["system_architecture_findings"] = ["B" * MAX_TEXT_CHARS for _ in range(MAX_LIST_ITEMS)]
+    payload["implementation_requirements"] = ["C" * MAX_TEXT_CHARS for _ in range(MAX_LIST_ITEMS)]
     brief = build_prompt_brief(payload, ())
 
     formatted = format_prompt("raw", brief)
