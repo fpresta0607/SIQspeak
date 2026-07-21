@@ -7,9 +7,12 @@ import pytest
 
 from siqspeak.config import (
     ENHANCEMENT_MODEL,
+    ENHANCEMENT_MODELS,
     MODEL_NAME,
     SPEECH_MODELS,
     _load_config,
+    enhancement_model_spec,
+    resolve_enhancement_model,
     save_config,
     save_state_config,
 )
@@ -46,18 +49,29 @@ def test_save_state_config_persists_enhancement_settings(
     assert _load_config()["workspace_override"] == r"C:\dev\project"
 
 
-def test_stale_persisted_enhancement_model_is_not_authoritative(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A config written by an older build may carry a different enhancement_model.
-    # There is one model now; startup pins state.enhancement_model to the single
-    # ENHANCEMENT_MODEL constant and never reads the persisted value back.
-    monkeypatch.setattr("siqspeak.config.CONFIG_PATH", str(tmp_path / "config.json"))
-    save_config({"enhancement_model": "qwen3.5:4b"})
+def test_enhancement_catalog_shape_and_order() -> None:
+    assert [item["name"] for item in ENHANCEMENT_MODELS] == [
+        "qwen3.5:2b",
+        "qwen3.5:4b",
+        "qwen3.5:9b",
+    ]
+    for spec in ENHANCEMENT_MODELS:
+        assert set(spec) == {"name", "tier", "download_gb", "min_gb"}
+    assert ENHANCEMENT_MODEL == "qwen3.5:4b"
 
-    assert _load_config()["enhancement_model"] == "qwen3.5:4b"  # stale value on disk
-    assert ENHANCEMENT_MODEL == "qwen3.5:4b"  # the one model the app pins to
-    assert AppState().enhancement_model == ENHANCEMENT_MODEL
+
+def test_enhancement_model_spec_falls_back_to_default_for_unknown() -> None:
+    assert enhancement_model_spec("qwen3.5:9b")["min_gb"] == 10.0
+    assert enhancement_model_spec("bogus:99b")["name"] == ENHANCEMENT_MODEL
+
+
+def test_persisted_valid_model_is_honored_invalid_falls_back() -> None:
+    # The persisted selection is now authoritative when it is a real catalog
+    # model; an unknown/stale name falls back to the default.
+    assert resolve_enhancement_model("qwen3.5:2b") == "qwen3.5:2b"
+    assert resolve_enhancement_model("qwen3.5:9b") == "qwen3.5:9b"
+    assert resolve_enhancement_model("old-model:1b") == ENHANCEMENT_MODEL
+    assert resolve_enhancement_model(None) == ENHANCEMENT_MODEL
 
 
 def test_load_config_missing_file(tmp_path, monkeypatch):

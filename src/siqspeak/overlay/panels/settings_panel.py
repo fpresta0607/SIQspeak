@@ -22,9 +22,6 @@ from PIL import Image, ImageDraw
 from siqspeak.audio.devices import _get_input_devices
 from siqspeak.config import (
     CYAN,
-    ENHANCEMENT_MODEL,
-    ENHANCEMENT_MODEL_DOWNLOAD_GB,
-    ENHANCEMENT_MODEL_MIN_GB,
     GRAY,
     LOG_CARD_BORDER,
     LOG_CARD_FILL,
@@ -32,6 +29,7 @@ from siqspeak.config import (
     SETTINGS_HEADER_H,
     WHITE,
     _settings_panel_width,
+    enhancement_model_spec,
 )
 from siqspeak.enhancement.hardware import can_run_model
 from siqspeak.enhancement.ollama import OllamaClient, OllamaError, OllamaUnavailable
@@ -64,6 +62,7 @@ class SettingsAction(str, Enum):
     MICROPHONE = "microphone"
     ENHANCEMENT_TOGGLE = "enhancement_toggle"
     WORKSPACE = "workspace"
+    ENHANCER_MODEL = "enhancer_model"
     INSTALL_MODEL = "install_model"
     QUIT = "quit"
 
@@ -90,6 +89,7 @@ def _settings_layout(state: AppState) -> list[SettingsRow]:
         (SettingsAction.MICROPHONE, _mic_section_height(state)),
         (SettingsAction.ENHANCEMENT_TOGGLE, SETTINGS_ROW_H),
         (SettingsAction.WORKSPACE, SETTINGS_ROW_H),
+        (SettingsAction.ENHANCER_MODEL, SETTINGS_ROW_H),
         (SettingsAction.INSTALL_MODEL, SETTINGS_STATUS_H),
         (SettingsAction.QUIT, QUIT_BTN_H),
     ]
@@ -118,12 +118,20 @@ def _settings_panel_height(state: AppState) -> int:
 # ---------------------------------------------------------------------------
 # Display helpers (pure)
 # ---------------------------------------------------------------------------
-def _model_requirement_label() -> str:
-    """Fixed-model line, e.g. ``qwen3.5:4b · ~3.4 GB · needs ~6 GB``."""
+def _model_requirement_label(state: AppState) -> str:
+    """Selected-model line, e.g. ``qwen3.5:4b · Balanced · ~3.4 GB · needs ~6 GB``."""
+    spec = enhancement_model_spec(state.enhancement_model)
     return (
-        f"{ENHANCEMENT_MODEL} · ~{ENHANCEMENT_MODEL_DOWNLOAD_GB:.1f} GB"
-        f" · needs ~{ENHANCEMENT_MODEL_MIN_GB:.0f} GB"
+        f"{spec['name']} · {spec['tier']} · ~{spec['download_gb']:.1f} GB"
+        f" · needs ~{spec['min_gb']:.0f} GB"
     )
+
+
+def _model_state_display(state: AppState) -> tuple[str, tuple[int, int, int]]:
+    """Return (label, rgb) for the selected model's install state chip."""
+    if state.enhancement_status == "ready":
+        return ("Ready", (40, 220, 80))
+    return ("Download", CYAN)
 
 
 def _workspace_display(state: AppState) -> tuple[str, str]:
@@ -163,6 +171,7 @@ def _settings_render_signature(state: AppState) -> tuple:
         state.mic_device,
         len(state.mic_devices),
         state.enhancement_enabled,
+        state.enhancement_model,
         state.enhancement_status,
         int(state.enhancement_pull_progress * 100),
         state.workspace_override,
@@ -228,6 +237,10 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     _draw_card(draw, card_left, rows[SettingsAction.WORKSPACE], card_right)
     _draw_workspace(draw, state, rows[SettingsAction.WORKSPACE],
                     text_left, value_right, font_label, font_meta, font_chip)
+
+    _draw_card(draw, card_left, rows[SettingsAction.ENHANCER_MODEL], card_right)
+    _draw_model(draw, state, rows[SettingsAction.ENHANCER_MODEL],
+                text_left, value_right, font_label, font_meta, font_chip)
 
     _draw_card(draw, card_left, rows[SettingsAction.INSTALL_MODEL], card_right)
     _draw_status(draw, state, rows[SettingsAction.INSTALL_MODEL],
@@ -321,11 +334,29 @@ def _draw_workspace(draw, state, row, text_left, value_right, font_label, font_m
     draw.text((text_left, row.y + 27), path, font=font_meta, fill=(*GRAY, 210))
 
 
+def _draw_model(draw, state, row, text_left, value_right, font_label, font_meta, font_chip) -> None:
+    draw.text((text_left, row.y + 7), "Enhancer model", font=font_label, fill=(*WHITE, 255))
+
+    label, color = _model_state_display(state)
+    chip_w = int(draw.textlength(label, font=font_chip)) + 16
+    chip_x1 = value_right
+    chip_x0 = chip_x1 - chip_w
+    chip_y = row.y + 8
+    draw.rounded_rectangle(
+        [chip_x0, chip_y, chip_x1, chip_y + 18], radius=9, fill=(*_ACCENT_SOFT, 255),
+    )
+    draw.text((chip_x0 + 8, chip_y + 2), label, font=font_chip, fill=(*color, 255))
+
+    requirement = _truncate_to_width(
+        draw, _model_requirement_label(state), font_meta, value_right - text_left,
+    )
+    draw.text((text_left, row.y + 27), requirement, font=font_meta, fill=(*GRAY, 210))
+
+
 def _draw_status(
     draw, state, row, text_left, value_right, card_left, card_right, font_label, font_meta, font_chip,
 ) -> None:
-    # Fixed model + its requirement, then the detected-hardware readout.
-    draw.text((text_left, row.y + 8), _model_requirement_label(), font=font_label, fill=(*WHITE, 255))
+    # Detected-hardware readout for the selected model.
     if state.enhancement_hardware:
         readout = _truncate_to_width(draw, state.enhancement_hardware, font_meta, value_right - text_left)
         draw.text((text_left, row.y + 30), readout, font=font_meta, fill=(*GRAY, 210))
@@ -390,7 +421,8 @@ def _refresh_enhancer_status(state: AppState) -> None:
     """Probe Ollama in the background and store a status string on state."""
     def worker() -> None:
         # Probe hardware off the render thread (nvidia-smi may take a moment).
-        state.enhancement_hardware = can_run_model(ENHANCEMENT_MODEL_MIN_GB)[1]
+        min_gb = enhancement_model_spec(state.enhancement_model)["min_gb"]
+        state.enhancement_hardware = can_run_model(min_gb)[1]
         client = OllamaClient()
         try:
             if not client.is_available():

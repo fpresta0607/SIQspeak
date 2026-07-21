@@ -14,6 +14,7 @@ from siqspeak.interaction import click_handlers
 from siqspeak.interaction.click_handlers import (
     _apply_enhancement_toggle,
     _apply_workspace_selection,
+    _cycle_enhancer_model,
     _install_model_action,
 )
 from siqspeak.state import AppState
@@ -73,6 +74,56 @@ def test_workspace_selection_ignores_cancelled_pick(_cfg) -> None:
 
     assert changed is False
     assert state.workspace_override == r"C:\existing"
+
+
+def test_cycle_enhancer_model_advances_and_persists(_cfg, monkeypatch) -> None:
+    # No real Ollama probe: the status refresh is stubbed out.
+    monkeypatch.setattr(click_handlers, "_refresh_enhancer_status", lambda s: None)
+    state = AppState()
+    assert state.enhancement_model == "qwen3.5:4b"
+
+    _cycle_enhancer_model(state)
+    assert state.enhancement_model == "qwen3.5:9b"
+    assert _load_config()["enhancement_model"] == "qwen3.5:9b"
+
+    _cycle_enhancer_model(state)
+    assert state.enhancement_model == "qwen3.5:2b"
+
+    _cycle_enhancer_model(state)
+    assert state.enhancement_model == "qwen3.5:4b"
+
+
+def test_install_action_pulls_selected_model_gated_by_its_min_gb(_cfg, monkeypatch) -> None:
+    state = AppState()
+    state.enhancement_model = "qwen3.5:9b"  # needs ~10 GB
+    state.enhancement_status = "model_missing"
+    seen_min_gb: list[float] = []
+    monkeypatch.setattr(
+        click_handlers, "can_run_model",
+        lambda min_gb: (seen_min_gb.append(min_gb) or (True, "31.7 GB RAM")),
+    )
+    pulled: list[object] = []
+    monkeypatch.setattr(click_handlers, "_start_model_pull", lambda s: pulled.append(s))
+
+    _install_model_action(state)
+
+    assert seen_min_gb == [10.0]
+    assert pulled == [state]
+
+
+def test_install_action_blocks_selected_model_when_hardware_short(_cfg, monkeypatch) -> None:
+    state = AppState()
+    state.enhancement_model = "qwen3.5:9b"  # needs ~10 GB
+    state.enhancement_status = "model_missing"
+    monkeypatch.setattr(click_handlers, "can_run_model", lambda min_gb: (False, "6.0 GB RAM"))
+    pulled: list[object] = []
+    monkeypatch.setattr(click_handlers, "_start_model_pull", lambda s: pulled.append(s))
+
+    _install_model_action(state)
+
+    assert pulled == []
+    assert state.enhancement_status == "error"
+    assert "10 GB" in (state.enhancement_error or "")
 
 
 def test_install_action_opens_download_when_ollama_missing(monkeypatch) -> None:

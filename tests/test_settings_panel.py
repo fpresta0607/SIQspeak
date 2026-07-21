@@ -10,6 +10,8 @@ import pytest
 
 from siqspeak.overlay.panels.settings_panel import (
     SettingsAction,
+    _model_requirement_label,
+    _model_state_display,
     _render_settings_panel,
     _settings_layout,
     _settings_panel_height,
@@ -25,6 +27,7 @@ def test_action_enum_has_stable_string_values() -> None:
     assert SettingsAction.MICROPHONE == "microphone"
     assert SettingsAction.ENHANCEMENT_TOGGLE == "enhancement_toggle"
     assert SettingsAction.WORKSPACE == "workspace"
+    assert SettingsAction.ENHANCER_MODEL == "enhancer_model"
     assert SettingsAction.INSTALL_MODEL == "install_model"
     assert SettingsAction.QUIT == "quit"
 
@@ -37,6 +40,7 @@ def test_layout_orders_rows_and_maps_each_to_its_action() -> None:
         SettingsAction.MICROPHONE,
         SettingsAction.ENHANCEMENT_TOGGLE,
         SettingsAction.WORKSPACE,
+        SettingsAction.ENHANCER_MODEL,
         SettingsAction.INSTALL_MODEL,
         SettingsAction.QUIT,
     ]
@@ -116,6 +120,39 @@ def test_render_signature_changes_when_workspace_override_changes() -> None:
     assert _settings_render_signature(state) != before
 
 
+def test_render_signature_changes_when_enhancement_model_changes() -> None:
+    state = AppState()
+    before = _settings_render_signature(state)
+
+    state.enhancement_model = "qwen3.5:9b"
+
+    assert _settings_render_signature(state) != before
+
+
+def test_model_requirement_label_reflects_selected_model() -> None:
+    state = AppState()
+    state.enhancement_model = "qwen3.5:9b"
+
+    label = _model_requirement_label(state)
+
+    assert "qwen3.5:9b" in label
+    assert "Best" in label
+    assert "6.6 GB" in label
+    assert "needs ~10 GB" in label
+
+
+def test_model_state_display_ready_vs_download() -> None:
+    state = AppState()
+    state.enhancement_status = "ready"
+    label, color = _model_state_display(state)
+    assert label == "Ready"
+    assert color == (40, 220, 80)
+
+    state.enhancement_status = "model_missing"
+    label, _color = _model_state_display(state)
+    assert label == "Download"
+
+
 @pytest.mark.parametrize(
     ("status", "expected_action"),
     [
@@ -166,6 +203,12 @@ def _assert_premultiplied_bgra(buf: np.ndarray, width: int, height: int) -> None
         lambda s: setattr(s, "enhancement_hardware", "31.7 GB RAM, 8.0 GB GPU"),
         lambda s: setattr(s, "workspace_detected_root", r"C:\dev\repo"),
         lambda s: setattr(s, "workspace_override", r"C:\dev\manual"),
+        lambda s: setattr(s, "enhancement_model", "qwen3.5:2b"),
+        lambda s: setattr(s, "enhancement_model", "qwen3.5:9b"),
+        lambda s: (
+            setattr(s, "enhancement_model", "qwen3.5:9b"),
+            setattr(s, "enhancement_status", "ready"),
+        ),
     ],
 )
 def test_render_states_produce_valid_premultiplied_bgra(mutate) -> None:
