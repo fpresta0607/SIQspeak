@@ -19,7 +19,6 @@ from siqspeak.config import (
     ACTIVE_H,
     ACTIVE_W,
     COPY_CONFIRM_SECONDS,
-    ENHANCEMENT_MODEL,
     IDLE_H,
     IDLE_W,
     LOG_PANEL_MAX_VISIBLE,
@@ -29,6 +28,7 @@ from siqspeak.config import (
     WM_APP_STATE,
     WM_TIMER,
     _load_config,
+    resolve_enhancement_model,
 )
 from siqspeak.enhancement.context import load_workspace_context
 from siqspeak.enhancement.ollama import OllamaClient
@@ -477,9 +477,9 @@ def main() -> None:
     state.pill_user_y = cfg.get("pill_y")
     state.mic_device = cfg.get("mic_device")
     state.enhancement_enabled = cfg.get("enhancement_enabled", False)
-    # Single enhancer model — ignore any stale persisted value so an old config
-    # (e.g. a previously chosen model) can never override the one model in use.
-    state.enhancement_model = ENHANCEMENT_MODEL
+    # The persisted selection is authoritative, but validate it against the
+    # catalog so a stale/unknown name falls back to the default model.
+    state.enhancement_model = resolve_enhancement_model(cfg.get("enhancement_model"))
     state.workspace_override = cfg.get("workspace_override")
 
     # Wire the optional local prompt-enhancement boundary once at startup

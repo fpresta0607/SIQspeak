@@ -51,9 +51,30 @@ MODEL_NAME = "base.en"
 SAMPLE_RATE = 16000
 
 # Local prompt enhancement (optional, opt-in)
-ENHANCEMENT_MODEL = "qwen3.5:4b"
-ENHANCEMENT_MODEL_DOWNLOAD_GB = 3.4   # on-disk download size
-ENHANCEMENT_MODEL_MIN_GB = 6.0        # RAM/VRAM needed to actually run it
+# Selectable qwen3.5 sizes with per-model download size and the RAM/VRAM needed
+# to actually run each one (the pre-download hardware gate).
+ENHANCEMENT_MODELS = (
+    {"name": "qwen3.5:2b", "tier": "Fastest",  "download_gb": 2.7, "min_gb": 4.0},
+    {"name": "qwen3.5:4b", "tier": "Balanced", "download_gb": 3.4, "min_gb": 6.0},
+    {"name": "qwen3.5:9b", "tier": "Best",     "download_gb": 6.6, "min_gb": 10.0},
+)
+ENHANCEMENT_MODEL = "qwen3.5:4b"   # default selection
+
+
+def enhancement_model_spec(name: str) -> dict:
+    """Return the catalog entry for ``name``, or the default entry if unknown."""
+    for spec in ENHANCEMENT_MODELS:
+        if spec["name"] == name:
+            return spec
+    return next(s for s in ENHANCEMENT_MODELS if s["name"] == ENHANCEMENT_MODEL)
+
+
+def resolve_enhancement_model(name: str | None) -> str:
+    """Return ``name`` if it is a known catalog model, else the default."""
+    valid = {spec["name"] for spec in ENHANCEMENT_MODELS}
+    if name is not None and name in valid:
+        return name
+    return ENHANCEMENT_MODEL
 
 # Streaming transcription (type-as-you-talk)
 STREAM_MODE = False                 # opt-in; toggled via settings panel

@@ -119,7 +119,7 @@ Settings persist to `config.json` (gitignored). Transcription runs CPU-only with
 **Constants in `config.py`:**
 - `MODEL_NAME` — `"base.en"` default
 - `SPEECH_MODELS` — curated English catalog: `tiny.en`, `base.en`, `small.en`, `distil-medium.en`, `distil-large-v3.5` (name/tier/size). `AVAILABLE_MODELS` and `MODEL_SIZES_MB` derive from it.
-- `ENHANCEMENT_MODEL` — fixed `"qwen3.5:4b"` (no UI model toggle); `ENHANCEMENT_MODEL_DOWNLOAD_GB` = `3.4`, `ENHANCEMENT_MODEL_MIN_GB` = `6.0` gate the pre-download hardware check
+- `ENHANCEMENT_MODELS` — selectable qwen3.5 catalog (`qwen3.5:2b`/`4b`/`9b`) with per-model `download_gb` + `min_gb` (RAM/VRAM needed to run), which gate the pre-download hardware check. `ENHANCEMENT_MODEL` = `"qwen3.5:4b"` is the default selection; `enhancement_model_spec(name)` looks up a catalog entry and `resolve_enhancement_model(name)` validates a persisted choice. The settings panel cycles the model, shows its size + hardware requirement + Ready/Download state, and persists the choice.
 - `SAMPLE_RATE` — 16000 Hz
 - `HOTKEY` — Ctrl+Shift+Space (via `WH_KEYBOARD_LL` hook)
 - `SILENCE_RMS_THRESHOLD` — `0.015`
