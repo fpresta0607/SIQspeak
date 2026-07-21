@@ -84,7 +84,7 @@ echo.
 echo   SIQspeak can rewrite spoken requests into structured coding prompts
 echo   using a local model. This runs entirely on your machine and is optional.
 echo.
-set /p ENHANCER="   Download the optional local prompt enhancer (~2.7 GB)? [Y/N]: "
+set /p ENHANCER="   Download the optional local prompt enhancer (~3.4 GB)? [Y/N]: "
 if /i "!ENHANCER!"=="Y" goto :enhancer_yes
 echo   [--] Skipped local prompt enhancer.
 goto :enhancer_done
@@ -92,10 +92,10 @@ goto :enhancer_done
 :enhancer_yes
 where ollama >nul 2>&1
 if !errorlevel! neq 0 goto :enhancer_no_ollama
-echo   [..] Downloading local prompt enhancer -- qwen3.5:2b, about 2.7 GB
+echo   [..] Downloading local prompt enhancer -- qwen3.5:4b, about 3.4 GB
 echo       This may take several minutes.
 echo.
-ollama pull qwen3.5:2b
+ollama pull qwen3.5:4b
 if !errorlevel! equ 0 goto :enhancer_done
 echo   [!] Enhancer download failed. Rerun setup.bat to try again.
 goto :enhancer_done

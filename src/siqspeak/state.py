@@ -115,7 +115,7 @@ class AppState:
 
     # Local prompt enhancement
     enhancement_enabled: bool = False
-    enhancement_model: str = "qwen3.5:2b"
+    enhancement_model: str = "qwen3.5:4b"
     enhancement_status: str | None = None
     enhancement_error: str | None = None
     enhancement_hardware: str | None = None  # detected RAM/VRAM readout (background probe)

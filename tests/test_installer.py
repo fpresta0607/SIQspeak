@@ -37,13 +37,13 @@ def test_installer_downloads_base_english_by_default() -> None:
 
 def test_installer_confirms_prompt_enhancer_explicitly() -> None:
     assert (
-        'set /p ENHANCER="   Download the optional local prompt enhancer (~2.7 GB)? [Y/N]: "'
+        'set /p ENHANCER="   Download the optional local prompt enhancer (~3.4 GB)? [Y/N]: "'
         in SETUP
     )
 
 
 def test_installer_default_ollama_model_is_qwen() -> None:
-    assert "ollama pull qwen3.5:2b" in SETUP
+    assert "ollama pull qwen3.5:4b" in SETUP
 
 
 def test_installer_pulls_ollama_only_on_confirmed_path() -> None:
@@ -51,7 +51,7 @@ def test_installer_pulls_ollama_only_on_confirmed_path() -> None:
     assert 'if /i "!ENHANCER!"=="Y"' in SETUP
 
     enhancer_index = SETUP.index("set /p ENHANCER")
-    pull_index = SETUP.index("ollama pull qwen3.5:2b")
+    pull_index = SETUP.index("ollama pull qwen3.5:4b")
     assert enhancer_index < pull_index
 
     # The pull must sit behind the confirmation gate.

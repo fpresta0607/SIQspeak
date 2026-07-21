@@ -16,8 +16,6 @@ MAX_CONTEXT_BYTES = 16 * 1024
 
 WORKSPACE_INSTRUCTION_FILES = ("CLAUDE.md", "AGENTS.md", "CODEX.md")
 
-MAX_PLAN_SOURCES = 3
-
 
 @dataclass(frozen=True)
 class ContextSource:
@@ -52,34 +50,15 @@ def load_workspace_context(
     workspace: Path | None,
     home: Path | None,
 ) -> tuple[ContextSource, ...]:
-    """Return instruction files then the newest workspace plan docs.
+    """Return only the project instruction files as bounded context.
 
-    Instruction files (from :func:`load_instruction_context`) are PRIMARY and
-    come first. Up to :data:`MAX_PLAN_SOURCES` most recently modified
-    ``docs/plans/*.md`` files under ``workspace`` follow as SECONDARY context,
-    each bounded to :data:`MAX_CONTEXT_BYTES`. Ordering is deterministic:
-    mtime descending, then name ascending for ties.
+    Thin wrapper over :func:`load_instruction_context`: workspace
+    ``CLAUDE.md``/``AGENTS.md``/``CODEX.md`` first, then the global
+    ``~/.claude/CLAUDE.md``. Plan docs are intentionally excluded to keep the
+    injected context focused on conventions and sources of truth rather than
+    diluting the model with large, task-specific narrative.
     """
-    sources = list(load_instruction_context(workspace, home))
-    if workspace is not None:
-        root = Path(workspace)
-        for plan in _recent_plans(root):
-            text = _read_bounded(plan, root=root)
-            if text is not None:
-                sources.append(ContextSource(label=f"docs/plans/{plan.name}", text=text))
-    return tuple(sources)
-
-
-def _recent_plans(workspace: Path) -> list[Path]:
-    plans_dir = workspace / "docs" / "plans"
-    if not plans_dir.is_dir():
-        return []
-    plans = [
-        path for path in plans_dir.glob("*.md")
-        if path.is_file() and not path.is_symlink()
-    ]
-    plans.sort(key=lambda path: (-path.stat().st_mtime, path.name))
-    return plans[:MAX_PLAN_SOURCES]
+    return load_instruction_context(workspace, home)
 
 
 def _is_within(path: Path, root: Path | None) -> bool:

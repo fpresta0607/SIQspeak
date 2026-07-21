@@ -119,7 +119,7 @@ def _settings_panel_height(state: AppState) -> int:
 # Display helpers (pure)
 # ---------------------------------------------------------------------------
 def _model_requirement_label() -> str:
-    """Fixed-model line, e.g. ``qwen3.5:2b · ~2.7 GB · needs ~4 GB``."""
+    """Fixed-model line, e.g. ``qwen3.5:4b · ~3.4 GB · needs ~6 GB``."""
     return (
         f"{ENHANCEMENT_MODEL} · ~{ENHANCEMENT_MODEL_DOWNLOAD_GB:.1f} GB"
         f" · needs ~{ENHANCEMENT_MODEL_MIN_GB:.0f} GB"
