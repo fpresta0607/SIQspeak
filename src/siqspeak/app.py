@@ -30,7 +30,7 @@ from siqspeak.config import (
     _load_config,
     resolve_enhancement_model,
 )
-from siqspeak.enhancement.context import load_workspace_context
+from siqspeak.enhancement.context import extract_context
 from siqspeak.enhancement.ollama import OllamaClient
 from siqspeak.enhancement.personalization import select_style_examples
 from siqspeak.enhancement.prompt import EnhancementResult
@@ -428,7 +428,7 @@ def _install_enhancer(state: AppState) -> None:
             # Only the workspace's own skill dirs — global user skills are
             # irrelevant noise for a project-scoped coding request.
             catalog = discover_skills(workspace, None)
-            context = load_workspace_context(workspace, Path.home())
+            context = extract_context(raw_text, workspace, Path.home())
             style = select_style_examples(raw_text, Path.home(), workspace, limit=3)
         except Exception:
             log.exception("context/skill/style discovery failed — enhancing without them")
