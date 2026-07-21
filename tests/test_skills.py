@@ -61,6 +61,19 @@ def test_discovers_workspace_and_user_roots(tmp_path: Path) -> None:
     assert set(_names(catalog)) == {"ws-skill", "user-skill"}
 
 
+def test_home_none_skips_user_skills(tmp_path: Path) -> None:
+    # With home=None the global user skill dirs are never scanned, so only the
+    # workspace's own skills are returned — no global-skill noise.
+    workspace = tmp_path / "ws"
+    home = tmp_path / "home"
+    write_skill(workspace, "ws-skill", "A workspace skill.", root=".github/skills")
+    write_skill(home, "user-skill", "A user skill.", root=".copilot/skills")
+
+    catalog = discover_skills(workspace=workspace, home=None)
+
+    assert _names(catalog) == ["ws-skill"]
+
+
 def test_valid_frontmatter_is_parsed(tmp_path: Path) -> None:
     write_skill(tmp_path, "linting", "  Lint the code.  ")
 

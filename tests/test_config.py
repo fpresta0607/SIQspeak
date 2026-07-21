@@ -56,7 +56,7 @@ def test_stale_persisted_enhancement_model_is_not_authoritative(
     save_config({"enhancement_model": "qwen3.5:4b"})
 
     assert _load_config()["enhancement_model"] == "qwen3.5:4b"  # stale value on disk
-    assert ENHANCEMENT_MODEL == "qwen3.5:2b"  # the one model the app pins to
+    assert ENHANCEMENT_MODEL == "qwen3.5:4b"  # the one model the app pins to
     assert AppState().enhancement_model == ENHANCEMENT_MODEL
 
 
@@ -109,6 +109,6 @@ def test_save_state_config_does_not_persist_device(tmp_path, monkeypatch):
         "pill_y": 200,
         "mic_device": 3,
         "enhancement_enabled": False,
-        "enhancement_model": "qwen3.5:2b",
+        "enhancement_model": "qwen3.5:4b",
         "workspace_override": None,
     }

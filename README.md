@@ -59,7 +59,7 @@ You should see something like `Python 3.12.x`. If you get an error, restart your
    - It creates a Python virtual environment
    - Installs all dependencies
    - Downloads the default `base.en` speech model (~141 MB)
-   - Asks if you want the optional local prompt enhancer (~2.7 GB, requires Ollama)
+   - Asks if you want the optional local prompt enhancer (~3.4 GB, requires Ollama)
    - Asks if you want a desktop shortcut
    - Asks if you want to run SIQspeak right away
 
@@ -122,13 +122,12 @@ Enhancement requires [Ollama for Windows](https://ollama.com/download) and a loc
 model. `setup.bat` can pull the default model for you, or run it manually:
 
 ```
-ollama pull qwen3.5:2b
+ollama pull qwen3.5:4b
 ```
 
-| Enhancer model | Size |
-|----------------|------|
-| `qwen3.5:2b` (default) | ~2.7 GB |
-| `qwen3.5:4b` | larger, higher quality |
+| Enhancer model | Download | Needs |
+|----------------|----------|-------|
+| `qwen3.5:4b` (fixed) | ~3.4 GB | ~6 GB RAM/VRAM |
 
 ## Run at Startup (Optional)
 
@@ -150,7 +149,7 @@ Settings are managed via the overlay UI. Constants live in `src/siqspeak/config.
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `MODEL_NAME` | `"base.en"` | Default Whisper speech model |
-| `ENHANCEMENT_MODEL` | `"qwen3.5:2b"` | Default local prompt-enhancer model (Ollama) |
+| `ENHANCEMENT_MODEL` | `"qwen3.5:4b"` | Default local prompt-enhancer model (Ollama) |
 | `SAMPLE_RATE` | `16000` | Audio sample rate in Hz |
 | `HOTKEY` | `Ctrl+Shift+Space` | Hold-to-record hotkey |
 
@@ -188,7 +187,7 @@ Speech models download anonymously from Hugging Face on first use (`base.en` is 
 Prompt enhancement is off by default and falls back to the raw transcript whenever it cannot run. Check that:
 - Enhancement is toggled on in the settings panel
 - Ollama is installed and running ([ollama.com/download](https://ollama.com/download))
-- The enhancer model is pulled (`ollama pull qwen3.5:2b`)
+- The enhancer model is pulled (`ollama pull qwen3.5:4b`)
 
 ### No audio / transcription is empty
 - Check that your microphone is set as the default recording device in Windows Sound settings

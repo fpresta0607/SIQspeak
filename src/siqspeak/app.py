@@ -385,12 +385,15 @@ def _install_enhancer(state: AppState) -> None:
     ) -> EnhancementResult:
         try:
             workspace = resolve_workspace(state.workspace_override, window_title, window_hwnd)
+            log.info("WORKSPACE resolved -> %s (hwnd=%s)", workspace, window_hwnd)
             # Sticky: keep the last successfully-detected root so the settings
             # panel still shows your most recent project even if this dictation
             # came from a non-project window.
             if workspace:
                 state.workspace_detected_root = str(workspace)
-            catalog = discover_skills(workspace, Path.home())
+            # Only the workspace's own skill dirs — global user skills are
+            # irrelevant noise for a project-scoped coding request.
+            catalog = discover_skills(workspace, None)
             context = load_workspace_context(workspace, Path.home())
             style = select_style_examples(raw_text, Path.home(), workspace, limit=3)
         except Exception:
