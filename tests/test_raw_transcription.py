@@ -40,17 +40,17 @@ def test_transcription_log_keeps_raw_whisper_text(monkeypatch) -> None:
     assert state.model.kwargs["condition_on_previous_text"] is False
 
 
-def test_enhancer_not_called_when_toggle_off(monkeypatch) -> None:
+def test_enhancer_not_called_in_default_mode(monkeypatch) -> None:
     raw_text = "please refactor the parser"
     state = AppState()
     state.model = _FakeModel(raw_text)
-    state.enhancement_enabled = False
+    state.enhancement_mode = "default"
     called = False
 
-    def _spy(_raw: str, _title: str):
+    def _spy(_raw: str, _title: str, _hwnd: int | None):
         nonlocal called
         called = True
-        raise AssertionError("enhancer must not run when toggle is off")
+        raise AssertionError("enhancer must not run in default mode")
 
     state.enhance_prompt = _spy
     monkeypatch.setattr(recording, "_save_log_entry", lambda _state, _entry: None)

@@ -418,6 +418,11 @@ def _install_enhancer(state: AppState) -> None:
     def enhance_prompt(
         raw_text: str, window_title: str, window_hwnd: int | None
     ) -> EnhancementResult:
+        # Email mode is speech->email, not codebase-grounded: no workspace, skills,
+        # context, or style examples — just the local model rewriting the transcript.
+        if state.enhancement_mode == "email":
+            from siqspeak.enhancement.email import enhance_email
+            return enhance_email(raw_text, model=state.enhancement_model, client=client)
         try:
             workspace = resolve_workspace(state.workspace_override, window_title, window_hwnd)
             log.info("WORKSPACE resolved -> %s (hwnd=%s)", workspace, window_hwnd)

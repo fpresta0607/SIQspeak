@@ -258,7 +258,7 @@ def _transcribe_and_type(
         final_text = raw_text
         enhanced = False
         selected_skills: tuple[str, ...] = ()
-        if state.enhancement_enabled and state.enhance_prompt is not None:
+        if state.enhancement_mode != "default" and state.enhance_prompt is not None:
             set_state(state, "enhancing")
             # Resolve workspace from the window dictated into, not the live foreground.
             # Title resolution runs at a boundary — a failure here must never sink
@@ -276,6 +276,7 @@ def _transcribe_and_type(
             "text": final_text,
             "raw_text": raw_text,
             "enhanced": enhanced,
+            "mode": state.enhancement_mode,
             "selected_skills": list(selected_skills),
             "timestamp": time.strftime("%H:%M:%S"),
             "time_epoch": time.time(),

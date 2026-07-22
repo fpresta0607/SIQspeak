@@ -1,13 +1,17 @@
-"""Tests for the enhanced transcription path (opt-in local prompt enhancement)."""
+"""Tests for the enhanced transcription path (mode-routed local enhancement)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 import numpy as np
+import pytest
 
 from siqspeak.audio import recording
 from siqspeak.enhancement.prompt import EnhancementResult
 from siqspeak.state import AppState
+
+# Non-default modes both route through state.enhance_prompt; "default" never does.
+ENHANCE_MODES = ["code", "email"]
 
 
 @dataclass
@@ -36,11 +40,35 @@ def _instrument(monkeypatch) -> list[tuple]:
     return events
 
 
-def test_enhancing_state_precedes_typing(monkeypatch) -> None:
+def test_default_mode_types_raw_and_skips_enhancer(monkeypatch) -> None:
     events = _instrument(monkeypatch)
     state = AppState()
     state.model = _FakeModel("raw words")
-    state.enhancement_enabled = True
+    state.enhancement_mode = "default"
+
+    def _must_not_run(_raw, _title, _hwnd):
+        raise AssertionError("enhancer must not run in default mode")
+
+    state.enhance_prompt = _must_not_run
+
+    recording._transcribe_and_type(state, np.zeros(16000, dtype=np.float32), target_hwnd=123)
+
+    assert ("type", "raw words") in events
+    entry = state.transcription_log[-1]
+    assert entry["text"] == "raw words"
+    assert entry["raw_text"] == "raw words"
+    assert entry["enhanced"] is False
+    assert entry["mode"] == "default"
+    # The enhancing state is never entered.
+    assert ("state", "enhancing") not in events
+
+
+@pytest.mark.parametrize("mode", ENHANCE_MODES)
+def test_enhancing_state_precedes_typing(monkeypatch, mode: str) -> None:
+    events = _instrument(monkeypatch)
+    state = AppState()
+    state.model = _FakeModel("raw words")
+    state.enhancement_mode = mode
     state.enhance_prompt = lambda raw, title, hwnd: EnhancementResult(
         raw, "FINAL " + raw, ("systematic-debugging",), True,
     )
@@ -52,11 +80,12 @@ def test_enhancing_state_precedes_typing(monkeypatch) -> None:
     assert kinds.index("state") < kinds.index("type")
 
 
-def test_successful_enhancement_types_final_text(monkeypatch) -> None:
+@pytest.mark.parametrize("mode", ENHANCE_MODES)
+def test_successful_enhancement_types_final_text(monkeypatch, mode: str) -> None:
     events = _instrument(monkeypatch)
     state = AppState()
     state.model = _FakeModel("raw words")
-    state.enhancement_enabled = True
+    state.enhancement_mode = mode
     state.enhance_prompt = lambda raw, title, hwnd: EnhancementResult(
         raw, "FINAL " + raw, ("systematic-debugging",), True,
     )
@@ -68,14 +97,16 @@ def test_successful_enhancement_types_final_text(monkeypatch) -> None:
     assert entry["text"] == "FINAL raw words"
     assert entry["raw_text"] == "raw words"
     assert entry["enhanced"] is True
+    assert entry["mode"] == mode
 
 
-def test_enhancer_receives_target_window_title_and_hwnd(monkeypatch) -> None:
+@pytest.mark.parametrize("mode", ENHANCE_MODES)
+def test_enhancer_receives_target_window_title_and_hwnd(monkeypatch, mode: str) -> None:
     _instrument(monkeypatch)
     seen: list[tuple[str, int | None]] = []
     state = AppState()
     state.model = _FakeModel("raw words")
-    state.enhancement_enabled = True
+    state.enhancement_mode = mode
 
     def _enhance(raw: str, title: str, hwnd: int | None) -> EnhancementResult:
         seen.append((title, hwnd))
@@ -90,11 +121,12 @@ def test_enhancer_receives_target_window_title_and_hwnd(monkeypatch) -> None:
     assert seen == [("title#456", 456)]
 
 
-def test_failed_enhancement_types_raw_text(monkeypatch) -> None:
+@pytest.mark.parametrize("mode", ENHANCE_MODES)
+def test_failed_enhancement_types_raw_text(monkeypatch, mode: str) -> None:
     events = _instrument(monkeypatch)
     state = AppState()
     state.model = _FakeModel("raw words")
-    state.enhancement_enabled = True
+    state.enhancement_mode = mode
     state.enhance_prompt = lambda raw, title, hwnd: EnhancementResult(raw, raw, (), False, "enhancement_failed")
 
     recording._transcribe_and_type(state, np.zeros(16000, dtype=np.float32), target_hwnd=55)
@@ -104,13 +136,15 @@ def test_failed_enhancement_types_raw_text(monkeypatch) -> None:
     assert entry["text"] == "raw words"
     assert entry["raw_text"] == "raw words"
     assert entry["enhanced"] is False
+    assert entry["mode"] == mode
 
 
-def test_focus_restoration_uses_original_target(monkeypatch) -> None:
+@pytest.mark.parametrize("mode", ENHANCE_MODES)
+def test_focus_restoration_uses_original_target(monkeypatch, mode: str) -> None:
     events = _instrument(monkeypatch)
     state = AppState()
     state.model = _FakeModel("raw words")
-    state.enhancement_enabled = True
+    state.enhancement_mode = mode
     state.enhance_prompt = lambda raw, title, hwnd: EnhancementResult(raw, "FINAL", (), True)
 
     recording._transcribe_and_type(state, np.zeros(16000, dtype=np.float32), target_hwnd=999)
@@ -130,7 +164,7 @@ def test_window_title_failure_still_logs_and_types(monkeypatch) -> None:
     seen_titles: list[str] = []
     state = AppState()
     state.model = _FakeModel("raw words")
-    state.enhancement_enabled = True
+    state.enhancement_mode = "code"
 
     def _enhance(raw: str, title: str, hwnd: int | None) -> EnhancementResult:
         seen_titles.append(title)
@@ -150,7 +184,7 @@ def test_new_recording_suppresses_typing(monkeypatch) -> None:
     events = _instrument(monkeypatch)
     state = AppState()
     state.model = _FakeModel("raw words")
-    state.enhancement_enabled = True
+    state.enhancement_mode = "code"
     state.is_recording = True  # a new recording started while we transcribed
     state.enhance_prompt = lambda raw, title, hwnd: EnhancementResult(raw, "FINAL", (), True)
 
