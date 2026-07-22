@@ -1,4 +1,4 @@
-"""Tests for bounded instruction-file context loading."""
+"""Tests for Code-mode context assembly: instruction floor + grep snippets."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,7 +7,6 @@ import pytest
 
 from siqspeak.enhancement.context import (
     MAX_CHARS_PER_FILE,
-    MAX_FILES,
     MAX_FINDINGS,
     MAX_TOTAL_CHARS,
     ContextFinding,
@@ -27,6 +26,13 @@ def _write_global(home: Path, text: str) -> None:
     global_dir = home / ".claude"
     global_dir.mkdir(parents=True, exist_ok=True)
     (global_dir / "CLAUDE.md").write_text(text, encoding="utf-8")
+
+
+def _paths(findings: tuple[ContextFinding, ...]) -> list[str]:
+    return [finding.source_path for finding in findings]
+
+
+# --- containment / symlink guards (unchanged) ---
 
 
 def test_is_within_rejects_out_of_root_paths(tmp_path: Path) -> None:
@@ -53,64 +59,25 @@ def test_symlinked_instruction_file_is_skipped(tmp_path: Path) -> None:
     assert findings == ()
 
 
-# --- extract_context: rich extraction with provenance, ranking, bounds ---
+# --- instruction floor: always present ---
 
 
-def _paths(findings: tuple[ContextFinding, ...]) -> list[str]:
-    return [finding.source_path for finding in findings]
+def test_extract_includes_workspace_and_global_instruction(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "CLAUDE.md").write_text("claude rules", encoding="utf-8")
+    (workspace / "AGENTS.md").write_text("agents rules", encoding="utf-8")
+    (workspace / "CODEX.md").write_text("codex rules", encoding="utf-8")
+    home = tmp_path / "home"
+    _write_global(home, "global rules")
 
-
-def test_extract_discovers_each_file_type_with_category(tmp_path: Path) -> None:
-    (tmp_path / "CLAUDE.md").write_text("claude rules", encoding="utf-8")
-    (tmp_path / "AGENTS.md").write_text("agents rules", encoding="utf-8")
-    (tmp_path / "CODEX.md").write_text("codex rules", encoding="utf-8")
-    (tmp_path / "ARCHITECTURE.md").write_text("architecture overview", encoding="utf-8")
-    (tmp_path / "README.md").write_text("readme overview", encoding="utf-8")
-    (tmp_path / "CONTRIBUTING.md").write_text("contributing guide", encoding="utf-8")
-    docs = tmp_path / "docs"
-    docs.mkdir()
-    (docs / "design.md").write_text("design doc", encoding="utf-8")
-
-    findings = extract_context("overview", workspace=tmp_path, home=None)
+    findings = extract_context("anything at all", workspace=workspace, home=home)
     by_path = {f.source_path: (f.category, f.confidence) for f in findings}
 
     assert by_path["CLAUDE.md"] == ("agent_instruction", "high")
     assert by_path["AGENTS.md"] == ("agent_instruction", "high")
     assert by_path["CODEX.md"] == ("agent_instruction", "high")
-    assert by_path["ARCHITECTURE.md"] == ("architecture", "high")
-    assert by_path["README.md"] == ("architecture", "medium")
-    assert by_path["CONTRIBUTING.md"] == ("constraint", "medium")
-    assert by_path["docs/design.md"] == ("architecture", "medium")
-
-
-def test_extract_includes_global_instruction(tmp_path: Path) -> None:
-    workspace = tmp_path / "ws"
-    workspace.mkdir()
-    home = tmp_path / "home"
-    _write_global(home, "global rules")
-
-    findings = extract_context("anything at all", workspace=workspace, home=home)
-    by_path = {f.source_path: f for f in findings}
-
-    assert "~/.claude/CLAUDE.md" in by_path
-    assert by_path["~/.claude/CLAUDE.md"].category == "agent_instruction"
-    assert by_path["~/.claude/CLAUDE.md"].confidence == "high"
-
-
-def test_extract_ranks_relevant_doc_above_unrelated(tmp_path: Path) -> None:
-    docs = tmp_path / "docs"
-    docs.mkdir()
-    # Named so path-order tiebreak alone would put the UNRELATED doc first;
-    # only token-overlap scoring can flip the relevant doc ahead.
-    (docs / "zzz_relevant.md").write_text(
-        "authentication login session token flow", encoding="utf-8"
-    )
-    (docs / "aaa_unrelated.md").write_text("banana pancake syrup weather", encoding="utf-8")
-
-    findings = extract_context("add authentication login flow", workspace=tmp_path, home=None)
-    paths = _paths(findings)
-
-    assert paths.index("docs/zzz_relevant.md") < paths.index("docs/aaa_unrelated.md")
+    assert by_path["~/.claude/CLAUDE.md"] == ("agent_instruction", "high")
 
 
 def test_extract_includes_agent_instruction_with_zero_overlap(tmp_path: Path) -> None:
@@ -123,20 +90,6 @@ def test_extract_includes_agent_instruction_with_zero_overlap(tmp_path: Path) ->
     )
 
 
-def test_extract_collapses_near_duplicate_text(tmp_path: Path) -> None:
-    (tmp_path / "README.md").write_text("Shared architecture overview text", encoding="utf-8")
-    docs = tmp_path / "docs"
-    docs.mkdir()
-    (docs / "copy.md").write_text("shared   architecture overview   TEXT", encoding="utf-8")
-
-    findings = extract_context("architecture", workspace=tmp_path, home=None)
-    paths = _paths(findings)
-
-    # README is discovered first, so it survives and the near-duplicate collapses.
-    assert ("README.md" in paths) != ("docs/copy.md" in paths)
-    assert "README.md" in paths
-
-
 def test_extract_caps_per_file_chars(tmp_path: Path) -> None:
     (tmp_path / "CLAUDE.md").write_text("a" * (MAX_CHARS_PER_FILE * 3), encoding="utf-8")
 
@@ -146,57 +99,153 @@ def test_extract_caps_per_file_chars(tmp_path: Path) -> None:
     assert len(claude.text) <= MAX_CHARS_PER_FILE
 
 
-def test_extract_enforces_total_char_cap(tmp_path: Path) -> None:
-    docs = tmp_path / "docs"
-    docs.mkdir()
-    for index in range(6):
-        (docs / f"doc{index}.md").write_text("a" * MAX_CHARS_PER_FILE, encoding="utf-8")
+def test_extract_keeps_all_instruction_findings_over_budget(tmp_path: Path) -> None:
+    # Four authoritative instruction files, each capped at MAX_CHARS_PER_FILE and
+    # collectively far larger than MAX_TOTAL_CHARS. The total-chars budget must
+    # NOT drop any of them — instruction findings are always kept.
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    home = tmp_path / "home"
+    for filename in ("CLAUDE.md", "AGENTS.md", "CODEX.md"):
+        (workspace / filename).write_text(
+            f"{filename} rules " * 4000, encoding="utf-8"
+        )
+    _write_global(home, "global rules " * 4000)
 
-    findings = extract_context("unrelated", workspace=tmp_path, home=None)
+    findings = extract_context("anything", workspace=workspace, home=home)
+    paths = _paths(findings)
+
     total = sum(len(f.text) for f in findings)
-
-    assert total <= MAX_TOTAL_CHARS
-
-
-def test_extract_enforces_max_findings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("siqspeak.enhancement.context.MAX_FILES", 1000)
-    monkeypatch.setattr("siqspeak.enhancement.context.MAX_DOC_FILES", 1000)
-    monkeypatch.setattr("siqspeak.enhancement.context.MAX_TOTAL_CHARS", 10**9)
-    docs = tmp_path / "docs"
-    docs.mkdir()
-    for index in range(MAX_FINDINGS + 5):
-        (docs / f"doc{index:02d}.md").write_text(f"content number {index}", encoding="utf-8")
-
-    findings = extract_context("content", workspace=tmp_path, home=None)
-
-    assert len(findings) == MAX_FINDINGS
+    assert total > MAX_TOTAL_CHARS  # oversized on purpose
+    for expected in ("CLAUDE.md", "AGENTS.md", "CODEX.md", "~/.claude/CLAUDE.md"):
+        assert expected in paths, expected
 
 
-def test_extract_enforces_max_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("siqspeak.enhancement.context.MAX_FINDINGS", 1000)
-    monkeypatch.setattr("siqspeak.enhancement.context.MAX_DOC_FILES", 1000)
-    monkeypatch.setattr("siqspeak.enhancement.context.MAX_TOTAL_CHARS", 10**9)
-    docs = tmp_path / "docs"
-    docs.mkdir()
-    for index in range(MAX_FILES + 8):
-        (docs / f"doc{index:03d}.md").write_text(f"content number {index}", encoding="utf-8")
-
-    findings = extract_context("content", workspace=tmp_path, home=None)
-
-    assert len(findings) == MAX_FILES
+# --- query-driven grep snippets ---
 
 
-def test_extract_missing_optional_docs_degrades(tmp_path: Path) -> None:
-    (tmp_path / "CLAUDE.md").write_text("only instruction", encoding="utf-8")
+def test_extract_source_term_yields_snippet_finding(tmp_path: Path) -> None:
+    # A request term appearing in a workspace SOURCE file surfaces as a bounded
+    # path:line snippet — the grep retrieval path, end-to-end through extract_context.
+    (tmp_path / "CLAUDE.md").write_text("project rules", encoding="utf-8")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "auth.py").write_text(
+        "def authenticate_user(token):\n    return verify(token)\n", encoding="utf-8"
+    )
 
-    findings = extract_context("anything", workspace=tmp_path, home=None)
+    findings = extract_context("how does authenticate_user work", workspace=tmp_path, home=None)
+
+    snippet = next((f for f in findings if f.source_path.startswith("src/auth.py")), None)
+    assert snippet is not None
+    assert snippet.category == "implementation_pattern"
+    assert ":" in snippet.source_path  # path:line provenance
+    assert "authenticate_user" in snippet.text
+    # instruction floor still present alongside the snippet
+    assert any(f.source_path == "CLAUDE.md" for f in findings)
+
+
+def test_extract_big_plan_snippet_not_whole_and_unrelated_excluded(tmp_path: Path) -> None:
+    # A term appearing only in a big docs/plans file no longer dumps the whole file;
+    # it appears (if at all) as a bounded snippet. An UNRELATED plan is not included
+    # (the old always-include-all-plans behavior is gone).
+    plans = tmp_path / "docs" / "plans"
+    plans.mkdir(parents=True)
+    big_body = "# Auth Plan\n\n" + ("authentication login session token flow. " * 2000)
+    (plans / "relevant.md").write_text(big_body, encoding="utf-8")
+    (plans / "unrelated.md").write_text(
+        "# Weather\n\nbanana pancake syrup weather forecast\n", encoding="utf-8"
+    )
+
+    findings = extract_context("add authentication login flow", workspace=tmp_path, home=None)
+    paths = _paths(findings)
+
+    assert not any(p.startswith("docs/plans/unrelated.md") for p in paths)
+    relevant = [f for f in findings if f.source_path.startswith("docs/plans/relevant.md")]
+    for finding in relevant:
+        assert ":" in finding.source_path  # path:line provenance
+        assert len(finding.text) < len(big_body)  # a bounded snippet, not the 80 KB file
+        assert len(finding.text) <= 5000
+
+
+def test_extract_env_with_matching_term_never_included(tmp_path: Path) -> None:
+    # Defense-in-depth: a planted .env whose contents match a query term is never
+    # read or injected (retrieval denylists it; assert at the extract_context level).
+    (tmp_path / ".env").write_text("SECRET_TOKEN=authentication-hunter2\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text(
+        "# authentication handler\nvalue = 1\n", encoding="utf-8"
+    )
+
+    findings = extract_context("authentication", workspace=tmp_path, home=None)
+    paths = _paths(findings)
+
+    assert not any(".env" in p for p in paths)
+    assert all("hunter2" not in f.text for f in findings)
+
+
+def test_extract_no_match_returns_instruction_floor_only(tmp_path: Path) -> None:
+    # No term matches any source: fall back to the instruction floor (still grounded).
+    (tmp_path / "CLAUDE.md").write_text("project conventions", encoding="utf-8")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "widget.py").write_text("def render_widget():\n    return None\n", encoding="utf-8")
+
+    findings = extract_context("xylophone zephyr quokka", workspace=tmp_path, home=None)
 
     assert _paths(findings) == ["CLAUDE.md"]
+
+
+# --- dedup / bounds / never-raises ---
+
+
+def test_extract_dedups_identical_snippet_text(tmp_path: Path) -> None:
+    # Two source files with byte-identical content yield one deduped snippet.
+    src = tmp_path / "src"
+    src.mkdir()
+    body = "def handle_login():\n    return authenticate()\n"
+    (src / "a.py").write_text(body, encoding="utf-8")
+    (src / "b.py").write_text(body, encoding="utf-8")
+
+    findings = extract_context("login", workspace=tmp_path, home=None)
+
+    assert len([f for f in findings if "handle_login" in f.text]) == 1
+
+
+def test_extract_enforces_bounds_with_floor_kept(tmp_path: Path) -> None:
+    for filename in ("CLAUDE.md", "AGENTS.md", "CODEX.md"):
+        (tmp_path / filename).write_text(f"{filename} project rules", encoding="utf-8")
+    src = tmp_path / "src"
+    src.mkdir()
+    for index in range(12):
+        (src / f"module{index:02d}.py").write_text(
+            f"# marker widget {index}\nvalue_{index} = {index}\n", encoding="utf-8"
+        )
+
+    findings = extract_context("widget", workspace=tmp_path, home=None)
+    paths = _paths(findings)
+
+    assert len(findings) <= MAX_FINDINGS
+    for filename in ("CLAUDE.md", "AGENTS.md", "CODEX.md"):
+        assert filename in paths  # instruction floor never dropped for budget
+    assert sum(len(f.text) for f in findings) <= MAX_TOTAL_CHARS
 
 
 def test_extract_no_sources_returns_empty(tmp_path: Path) -> None:
     assert extract_context("x", workspace=tmp_path, home=None) == ()
     assert extract_context("x", workspace=None, home=None) == ()
+
+
+def test_extract_never_raises_on_non_str_request(tmp_path: Path) -> None:
+    # A non-str request must be handled gracefully: no terms/snippets, but the
+    # instruction floor still stands (best-effort, never raised).
+    (tmp_path / "CLAUDE.md").write_text("rules", encoding="utf-8")
+
+    findings = extract_context(None, workspace=tmp_path, home=None)  # type: ignore[arg-type]
+
+    assert _paths(findings) == ["CLAUDE.md"]
+
+
+# --- .mcp.json tooling finding (name-only) ---
 
 
 def test_extract_mcp_reports_server_names_only(tmp_path: Path) -> None:
@@ -226,50 +275,6 @@ def test_extract_malformed_mcp_skipped(tmp_path: Path) -> None:
 
     assert ".mcp.json" not in paths
     assert "CLAUDE.md" in paths
-
-
-def test_extract_skips_symlinked_doc(tmp_path: Path) -> None:
-    docs = tmp_path / "docs"
-    docs.mkdir()
-    secret = tmp_path / "secret.md"
-    secret.write_text("out of root secret payload", encoding="utf-8")
-    _symlink_or_skip(docs / "link.md", secret)
-
-    findings = extract_context("secret", workspace=tmp_path, home=None)
-
-    assert "docs/link.md" not in _paths(findings)
-    assert all("secret payload" not in f.text for f in findings)
-
-
-def test_extract_keeps_all_instruction_findings_over_budget(tmp_path: Path) -> None:
-    # Four authoritative instruction files, each capped at MAX_CHARS_PER_FILE and
-    # collectively far larger than MAX_TOTAL_CHARS. The total-chars budget must
-    # NOT drop any of them — instruction findings are always kept.
-    workspace = tmp_path / "ws"
-    workspace.mkdir()
-    home = tmp_path / "home"
-    for filename in ("CLAUDE.md", "AGENTS.md", "CODEX.md"):
-        (workspace / filename).write_text(
-            f"{filename} rules " * 4000, encoding="utf-8"
-        )
-    _write_global(home, "global rules " * 4000)
-
-    findings = extract_context("anything", workspace=workspace, home=home)
-    paths = _paths(findings)
-
-    total = sum(len(f.text) for f in findings)
-    assert total > MAX_TOTAL_CHARS  # oversized on purpose
-    for expected in ("CLAUDE.md", "AGENTS.md", "CODEX.md", "~/.claude/CLAUDE.md"):
-        assert expected in paths, expected
-
-
-def test_extract_never_raises_on_non_str_request(tmp_path: Path) -> None:
-    # A non-str request must be handled gracefully (best-effort), never raised.
-    (tmp_path / "CLAUDE.md").write_text("rules", encoding="utf-8")
-
-    findings = extract_context(None, workspace=tmp_path, home=None)  # type: ignore[arg-type]
-
-    assert findings == ()
 
 
 def test_extract_mcp_without_server_map_is_skipped(tmp_path: Path) -> None:
