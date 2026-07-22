@@ -60,6 +60,19 @@ ENHANCEMENT_MODELS = (
 )
 ENHANCEMENT_MODEL = "qwen3.5:4b"   # default selection
 
+# Enhancement mode selector (replaces the legacy on/off boolean):
+#   default -> raw transcript, no LLM
+#   code    -> engineering-grade prompt enhancer
+#   email   -> spoken rough email -> polished email
+ENHANCEMENT_MODES = ("default", "code", "email")
+
+
+def resolve_enhancement_mode(value: str | None) -> str:
+    """Return ``value`` if it is a known enhancement mode, else ``"default"``."""
+    if value is not None and value in ENHANCEMENT_MODES:
+        return value
+    return "default"
+
 
 def enhancement_model_spec(name: str) -> dict:
     """Return the catalog entry for ``name``, or the default entry if unknown."""
@@ -274,6 +287,8 @@ def save_state_config(state: AppState) -> None:
         "pill_x": state.pill_user_x,
         "pill_y": state.pill_user_y,
         "mic_device": state.mic_device,
+        "enhancement_mode": state.enhancement_mode,
+        # Legacy mirror kept until Phase 3/4 migrate the toggle readers/writers.
         "enhancement_enabled": state.enhancement_enabled,
         "enhancement_model": state.enhancement_model,
         "workspace_override": state.workspace_override,

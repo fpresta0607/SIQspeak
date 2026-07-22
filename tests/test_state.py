@@ -36,10 +36,29 @@ def test_independent_instances():
 
 def test_enhancement_defaults_are_memory_friendly():
     state = AppState()
+    assert state.enhancement_mode == "default"
     assert state.enhancement_enabled is False
     # There is one enhancer model; the default is tied to the single constant.
     assert state.enhancement_model == ENHANCEMENT_MODEL
     assert state.workspace_override is None
+
+
+def test_enhancement_enabled_alias_reflects_mode():
+    state = AppState()
+    assert state.enhancement_enabled is False
+
+    state.enhancement_mode = "code"
+    assert state.enhancement_enabled is True
+
+    state.enhancement_mode = "email"
+    assert state.enhancement_enabled is True
+
+    # The alias remains writable so pre-migration callers keep working.
+    state.enhancement_enabled = False
+    assert state.enhancement_mode == "default"
+
+    state.enhancement_enabled = True
+    assert state.enhancement_mode == "code"
 
 
 def test_live_workspace_bookkeeping_defaults_to_none():

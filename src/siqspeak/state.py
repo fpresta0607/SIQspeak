@@ -114,7 +114,7 @@ class AppState:
     stream_texts: list[str] = field(default_factory=list)
 
     # Local prompt enhancement
-    enhancement_enabled: bool = False
+    enhancement_mode: str = "default"  # "default" | "code" | "email"
     enhancement_model: str = "qwen3.5:4b"
     enhancement_status: str | None = None
     enhancement_error: str | None = None
@@ -134,3 +134,14 @@ class AppState:
     # Hooks
     mouse_hook: int | None = None
     keyboard_hook: int | None = None
+
+    # Legacy boolean bridge over ``enhancement_mode``. Kept read/write so
+    # pre-migration readers and writers keep working until Phase 3/4 move
+    # them onto ``enhancement_mode`` directly. Not a dataclass field.
+    @property
+    def enhancement_enabled(self) -> bool:
+        return self.enhancement_mode != "default"
+
+    @enhancement_enabled.setter
+    def enhancement_enabled(self, value: bool) -> None:
+        self.enhancement_mode = "code" if value else "default"

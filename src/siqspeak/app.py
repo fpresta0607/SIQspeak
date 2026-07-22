@@ -28,6 +28,7 @@ from siqspeak.config import (
     WM_APP_STATE,
     WM_TIMER,
     _load_config,
+    resolve_enhancement_mode,
     resolve_enhancement_model,
 )
 from siqspeak.enhancement.context import extract_context
@@ -476,7 +477,10 @@ def main() -> None:
     state.pill_user_x = cfg.get("pill_x")
     state.pill_user_y = cfg.get("pill_y")
     state.mic_device = cfg.get("mic_device")
-    state.enhancement_enabled = cfg.get("enhancement_enabled", False)
+    # Migrate a legacy persisted ``enhancement_enabled: True`` to the "code" mode.
+    state.enhancement_mode = resolve_enhancement_mode(
+        cfg.get("enhancement_mode", "code" if cfg.get("enhancement_enabled") else "default"),
+    )
     # The persisted selection is authoritative, but validate it against the
     # catalog so a stale/unknown name falls back to the default model.
     state.enhancement_model = resolve_enhancement_model(cfg.get("enhancement_model"))
