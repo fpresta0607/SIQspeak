@@ -114,7 +114,7 @@ class AppState:
     stream_texts: list[str] = field(default_factory=list)
 
     # Local prompt enhancement
-    enhancement_enabled: bool = False
+    enhancement_mode: str = "default"  # "default" | "code" | "email"
     enhancement_model: str = "qwen3.5:4b"
     enhancement_status: str | None = None
     enhancement_error: str | None = None

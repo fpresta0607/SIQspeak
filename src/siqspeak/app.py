@@ -28,6 +28,7 @@ from siqspeak.config import (
     WM_APP_STATE,
     WM_TIMER,
     _load_config,
+    resolve_enhancement_mode,
     resolve_enhancement_model,
 )
 from siqspeak.enhancement.context import extract_context
@@ -417,6 +418,11 @@ def _install_enhancer(state: AppState) -> None:
     def enhance_prompt(
         raw_text: str, window_title: str, window_hwnd: int | None
     ) -> EnhancementResult:
+        # Email mode is speech->email, not codebase-grounded: no workspace, skills,
+        # context, or style examples — just the local model rewriting the transcript.
+        if state.enhancement_mode == "email":
+            from siqspeak.enhancement.email import enhance_email
+            return enhance_email(raw_text, model=state.enhancement_model, client=client)
         try:
             workspace = resolve_workspace(state.workspace_override, window_title, window_hwnd)
             log.info("WORKSPACE resolved -> %s (hwnd=%s)", workspace, window_hwnd)
@@ -437,7 +443,7 @@ def _install_enhancer(state: AppState) -> None:
             style = ()
         return enhance_request(
             raw_text,
-            enabled=state.enhancement_enabled,
+            enabled=True,
             model=state.enhancement_model,
             client=client,
             catalog=catalog,
@@ -476,7 +482,10 @@ def main() -> None:
     state.pill_user_x = cfg.get("pill_x")
     state.pill_user_y = cfg.get("pill_y")
     state.mic_device = cfg.get("mic_device")
-    state.enhancement_enabled = cfg.get("enhancement_enabled", False)
+    # Migrate a legacy persisted ``enhancement_enabled: True`` to the "code" mode.
+    state.enhancement_mode = resolve_enhancement_mode(
+        cfg.get("enhancement_mode", "code" if cfg.get("enhancement_enabled") else "default"),
+    )
     # The persisted selection is authoritative, but validate it against the
     # catalog so a stale/unknown name falls back to the default model.
     state.enhancement_model = resolve_enhancement_model(cfg.get("enhancement_model"))

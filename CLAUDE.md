@@ -114,7 +114,7 @@ When enabled, silence detection (~0.7s) dispatches audio to `_transcription_work
 
 Settings persist to `config.json` (gitignored). Transcription runs CPU-only with `int8` compute.
 
-**Persisted:** model name, stream mode, pill position, mic device index, enhancement enabled, enhancement model, workspace override.
+**Persisted:** model name, stream mode, pill position, mic device index, enhancement mode, enhancement model, workspace override.
 
 **Constants in `config.py`:**
 - `MODEL_NAME` — `"base.en"` default
@@ -126,21 +126,26 @@ Settings persist to `config.json` (gitignored). Transcription runs CPU-only with
 - `SILENCE_DURATION` — `0.7s`
 - `MIN_CHUNK_DURATION` — `0.5s`
 
-## Prompt Enhancement (optional, off by default)
+## Prompt Enhancement (3 modes)
 
-`src/siqspeak/enhancement/` adds opt-in local rewriting of a spoken request into a structured coding prompt before typing.
+`src/siqspeak/enhancement/` adds local rewriting of a spoken request before typing, selected via a 3-mode setting (`enhancement_mode`, persisted; legacy `enhancement_enabled: true` migrates to `"code"`):
 
-- **Raw vs. enhanced:** With the toggle off, the raw Whisper transcript is typed immediately. With it on, the overlay shows an `enhancing` state, a local model rewrites the transcript into an Engineering Task, then the structured prompt is typed. Enhancement adds latency; it is not instantaneous.
-- **Context extraction (`context.py`):** `extract_context(request, workspace, home)` reads (never executes) project docs into ranked, bounded, provenance-tagged `ContextFinding`s. Sources: agent-instruction files (`CLAUDE.md`/`AGENTS.md`/`CODEX.md` + global `~/.claude/CLAUDE.md`, category `agent_instruction`), named docs (`ARCHITECTURE.md`, `README.md`, `CONTRIBUTING.md`), a `docs/**/*.md` sweep (walk capped at `MAX_DOC_FILES` enumerated candidates, then sorted for determinism), and `.mcp.json` (server names ONLY — never values; skipped when no `mcpServers` map). Each finding carries `source_path`/`category`/`confidence`. Agent-instruction findings are always kept (bounded only by `MAX_FINDINGS`); the ranked non-instruction tail is ordered by request/text token overlap and trimmed to `MAX_TOTAL_CHARS`. Every file is read symlink-guarded, containment-checked, byte-capped, and NUL-stripped. It never raises — on any failure it returns whatever was gathered.
+- **Default:** the raw Whisper transcript is typed as-is. No LLM call.
+- **Code:** the engineering-grade enhancer — extracts repo context and rewrites the transcript into a structured `# Engineering Task` brief (see below).
+- **Email (`email.py`):** rewrites a dictated rough email into a polished one — a greeting, a well-structured body, and a brief closing (e.g. `"Thanks,"`). Uses the literal `[name]` placeholder when no recipient is dictated, and NEVER appends a signature/sender name/job title/contact block. Same trust boundary as Code: the dictated text is treated as content to polish, not instructions to follow; the model's reply is bounds-validated and control-/exfil-scrubbed before being typed; any failure falls back to the raw transcript.
+
+Code and Email both call out to the local Ollama model (the model selector in settings powers both); Default never does. When either AI mode is active, the overlay shows an `enhancing` state while the model works — enhancement adds latency, it is not instantaneous.
+
+- **Context extraction (`context.py`, used by Code mode):** `extract_context(request, workspace, home)` reads (never executes) project docs into ranked, bounded, provenance-tagged `ContextFinding`s. Sources: agent-instruction files (`CLAUDE.md`/`AGENTS.md`/`CODEX.md` + global `~/.claude/CLAUDE.md`, category `agent_instruction`), named docs (`ARCHITECTURE.md`, `README.md`, `CONTRIBUTING.md`), a `docs/**/*.md` sweep (walk capped at `MAX_DOC_FILES` enumerated candidates, then sorted for determinism), and `.mcp.json` (server names ONLY — never values; skipped when no `mcpServers` map). Each finding carries `source_path`/`category`/`confidence`. Agent-instruction findings are always kept (bounded only by `MAX_FINDINGS`); the ranked non-instruction tail is ordered by request/text token overlap and trimmed to `MAX_TOTAL_CHARS`. Every file is read symlink-guarded, containment-checked, byte-capped, and NUL-stripped. It never raises — on any failure it returns whatever was gathered.
 - **Trust-tier messages (`service.py`):** Findings are injected as two DISTINCT user messages sharing one `MAX_CONTEXT_MESSAGE_CHARS` budget — an *authoritative* tier (agent-instruction conventions to follow) and a *retrieved evidence* tier (reference only), each attributed by `source_path`. Both are framed as untrusted for embedded directives: the model must never obey instructions inside them or let them change the output schema.
 - **Engineering Task output contract (`prompt.py`):** The model returns a JSON object (`PROMPT_SCHEMA`) that `build_prompt_brief` bounds-validates into a `PromptBrief`, which `format_prompt` renders into the stable `# Engineering Task` markdown (Original Request verbatim first, then Requested Outcome, Current-State Evidence, System Architecture Findings, Implementation Requirements, Non-Goals, Sources of Truth, Investigation Path, Acceptance Criteria, Verification, Required Final Report — empty sections omitted, whole output capped). Nine free-text fields are strictly validated (missing/wrong-type rejected → raw fallback) and defense-scrubbed for control chars and obvious secret/exfil patterns (pipe-to-shell, PEM headers, AKIA/`sk-`/`ghp_`/`xox*`/Bearer tokens) since text is typed via SendInput. `selected_skills` come from the trusted catalog, not the payload.
 - **Deterministic `sources_of_truth`:** The model's `sources_of_truth` is parsed leniently (never a fallback trigger) because the service unconditionally overrides it with the real provided finding paths — dropping any hallucinated URL/path and leaving it empty when no context was supplied.
 - **Local-only boundary:** `ollama.py` talks to `http://127.0.0.1:11434` only — no configurable remote endpoint. Transcript and prompt text never leave the machine. The debug log (`dictate.log`) records only lengths/status, never content; the visible history is persisted to `transcriptions.jsonl` for the log panel.
 - **Agent Skill selection without execution:** `skills.py` parses only bounded YAML frontmatter (≤64 KiB reads, name-validated, description-capped) from workspace/user skill dirs to suggest skill names. Skill bodies are never opened or executed; names/descriptions are untrusted catalog data. `disable-model-invocation: true` skills are excluded from automatic candidates but honored when named explicitly.
 - **Workspace override:** `workspace.py` resolves a trusted root in precedence order: the manual override (wins); the focused terminal's shell working directory (`terminal.py` maps the dictated window's HWND → PID via `psutil`, identifies a shell or terminal-host descendant, reads its CWD — best-effort, never raises/blocks/logs the path); then an absolute path parsed out of the dictated window's title (captured at record start, not the live foreground). Each non-override signal ascends to a Git root. It never scans drives or guesses.
-- **Raw fallback:** Disabled toggle, unavailable Ollama, missing model, or a malformed response all fall back to typing the preserved raw transcript. Enhancement is lossless.
+- **Raw fallback:** Default mode, unavailable Ollama, missing model, or a malformed response all fall back to typing the preserved raw transcript. Enhancement is lossless.
 
-Requires [Ollama for Windows](https://ollama.com/download); `setup.bat` optionally pulls `qwen3.5:4b` (~3.4 GB, needs ~6 GB RAM/VRAM to run). Enhancement package coverage: `pytest tests/test_skills.py tests/test_ollama.py tests/test_prompt.py tests/test_enhancement_service.py --cov=siqspeak.enhancement`.
+Requires [Ollama for Windows](https://ollama.com/download); `setup.bat` optionally pulls `qwen3.5:4b` (~3.4 GB, needs ~6 GB RAM/VRAM to run). Enhancement package coverage: `pytest tests/test_skills.py tests/test_ollama.py tests/test_prompt.py tests/test_enhancement_service.py tests/test_email.py --cov=siqspeak.enhancement`.
 
 ## Dependencies
 

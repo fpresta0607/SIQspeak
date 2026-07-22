@@ -12,8 +12,8 @@ from siqspeak.app import _should_resolve
 from siqspeak.config import _load_config
 from siqspeak.interaction import click_handlers
 from siqspeak.interaction.click_handlers import (
-    _apply_enhancement_toggle,
     _apply_workspace_selection,
+    _cycle_enhancement_mode,
     _cycle_enhancer_model,
     _install_model_action,
 )
@@ -43,17 +43,21 @@ def _cfg(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_toggle_enhancement_flips_and_persists(_cfg) -> None:
+def test_cycle_enhancement_mode_advances_and_persists(_cfg) -> None:
     state = AppState()
-    assert state.enhancement_enabled is False
+    assert state.enhancement_mode == "default"
 
-    _apply_enhancement_toggle(state)
+    _cycle_enhancement_mode(state)
+    assert state.enhancement_mode == "code"
+    assert _load_config()["enhancement_mode"] == "code"
 
-    assert state.enhancement_enabled is True
-    assert _load_config()["enhancement_enabled"] is True
+    _cycle_enhancement_mode(state)
+    assert state.enhancement_mode == "email"
+    assert _load_config()["enhancement_mode"] == "email"
 
-    _apply_enhancement_toggle(state)
-    assert state.enhancement_enabled is False
+    _cycle_enhancement_mode(state)
+    assert state.enhancement_mode == "default"
+    assert _load_config()["enhancement_mode"] == "default"
 
 
 def test_workspace_selection_persists_valid_folder(_cfg) -> None:

@@ -10,6 +10,7 @@ import pytest
 
 from siqspeak.overlay.panels.settings_panel import (
     SettingsAction,
+    _mode_display,
     _model_requirement_label,
     _model_state_display,
     _render_settings_panel,
@@ -25,20 +26,36 @@ from siqspeak.state import AppState
 
 def test_action_enum_has_stable_string_values() -> None:
     assert SettingsAction.MICROPHONE == "microphone"
-    assert SettingsAction.ENHANCEMENT_TOGGLE == "enhancement_toggle"
+    assert SettingsAction.MODE == "mode"
     assert SettingsAction.WORKSPACE == "workspace"
     assert SettingsAction.ENHANCER_MODEL == "enhancer_model"
     assert SettingsAction.INSTALL_MODEL == "install_model"
     assert SettingsAction.QUIT == "quit"
 
 
-def test_layout_orders_rows_and_maps_each_to_its_action() -> None:
-    state = AppState()
+def test_default_mode_layout_hides_model_rows_and_maps_each_action() -> None:
+    state = AppState()  # default mode: no local model needed
     rows = _settings_layout(state)
 
     assert [row.action for row in rows] == [
         SettingsAction.MICROPHONE,
-        SettingsAction.ENHANCEMENT_TOGGLE,
+        SettingsAction.MODE,
+        SettingsAction.WORKSPACE,
+        SettingsAction.QUIT,
+    ]
+    for row in rows:
+        assert settings_action_at_y(state, row.y + 1) == row.action
+
+
+@pytest.mark.parametrize("mode", ["code", "email"])
+def test_active_mode_layout_shows_model_rows_and_maps_each_action(mode: str) -> None:
+    state = AppState()
+    state.enhancement_mode = mode
+    rows = _settings_layout(state)
+
+    assert [row.action for row in rows] == [
+        SettingsAction.MICROPHONE,
+        SettingsAction.MODE,
         SettingsAction.WORKSPACE,
         SettingsAction.ENHANCER_MODEL,
         SettingsAction.INSTALL_MODEL,
@@ -46,6 +63,35 @@ def test_layout_orders_rows_and_maps_each_to_its_action() -> None:
     ]
     for row in rows:
         assert settings_action_at_y(state, row.y + 1) == row.action
+
+
+@pytest.mark.parametrize(
+    ("mode", "label", "description_fragment"),
+    [
+        ("default", "Default", "raw transcript"),
+        ("code", "Code", "coding brief"),
+        ("email", "Email", "polished email"),
+    ],
+)
+def test_mode_display_reflects_active_mode(
+    mode: str, label: str, description_fragment: str,
+) -> None:
+    state = AppState()
+    state.enhancement_mode = mode
+
+    displayed_label, description = _mode_display(state)
+
+    assert displayed_label == label
+    assert description_fragment in description
+
+
+def test_render_signature_changes_when_enhancement_mode_changes() -> None:
+    state = AppState()
+    before = _settings_render_signature(state)
+
+    state.enhancement_mode = "code"
+
+    assert _settings_render_signature(state) != before
 
 
 def test_action_at_y_within_header_is_none() -> None:
@@ -192,8 +238,9 @@ def _assert_premultiplied_bgra(buf: np.ndarray, width: int, height: int) -> None
 @pytest.mark.parametrize(
     "mutate",
     [
-        lambda s: setattr(s, "enhancement_enabled", True),
-        lambda s: setattr(s, "enhancement_enabled", False),
+        lambda s: setattr(s, "enhancement_mode", "code"),
+        lambda s: setattr(s, "enhancement_mode", "email"),
+        lambda s: setattr(s, "enhancement_mode", "default"),
         lambda s: setattr(s, "enhancement_status", "ollama_missing"),
         lambda s: setattr(s, "enhancement_status", "model_missing"),
         lambda s: (
@@ -224,7 +271,7 @@ def test_render_states_produce_valid_premultiplied_bgra(mutate) -> None:
 def test_render_width_is_stable_across_states() -> None:
     plain = AppState()
     busy = AppState()
-    busy.enhancement_enabled = True
+    busy.enhancement_mode = "code"
     busy.enhancement_status = "pulling"
 
     _buf_a, width_a, _h_a = _render_settings_panel(plain)

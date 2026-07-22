@@ -9,7 +9,7 @@ Powered by OpenAI's [Whisper](https://github.com/openai/whisper) model running l
 - **Hold-to-talk** - Hold `Ctrl+Shift+Space` to record, release to transcribe
 - **Auto-type** - Transcribed text is typed directly into whatever window was active
 - **100% local** - Whisper runs on your CPU, nothing leaves your machine
-- **Optional prompt enhancement** - Rewrite a spoken request into a structured coding prompt with a local model (opt-in, off by default)
+- **3-mode enhancement** - Default types the raw transcript; Code rewrites it into a structured coding prompt; Email rewrites it into a polished email — Code and Email both use a local model
 - **Curated English models** - Five hand-picked English speech models from fastest to best quality
 - **System tray** - Runs quietly in the background, right-click to quit
 - **Visual overlay** - Animated floating pill shows recording/transcribing status with audio-reactive dots
@@ -89,32 +89,42 @@ A small floating pill will appear on your screen and a tray icon will show in th
 - **Gray** - Idle, ready
 - **Cyan** - Recording
 - **Dark blue** - Transcribing
-- **Blue** - Enhancing (rewriting the transcript into a structured prompt)
+- **Blue** - Enhancing (rewriting the transcript in Code or Email mode)
 
-## Prompt Enhancement (Optional)
+## Prompt Enhancement (3 Modes)
 
-By default SIQspeak types the raw transcript exactly as Whisper heard it. You can
-turn on prompt enhancement in the settings panel to have a local model rewrite a
-spoken request into a structured coding prompt (objective, context, requirements,
-acceptance criteria, verification) before it is typed.
+Switch the enhancement mode in the settings panel:
 
-- **Raw vs. enhanced toggle** - Enhancement is off by default. When off, the raw
-  transcript is typed as soon as Whisper finishes. When on, the overlay shows an
-  "enhancing" state while the local model works, then types the structured prompt.
+- **Default** - The raw Whisper transcript is typed exactly as heard. No local
+  model is used.
+- **Code** - Rewrites a spoken request into a structured coding prompt (objective,
+  context, requirements, acceptance criteria, verification), pulling context from
+  your repo's docs.
+- **Email** - Rewrites a dictated rough email into a polished one: a greeting, a
+  well-structured body, and a brief closing (e.g. "Thanks,"). Uses the placeholder
+  `[name]` when no recipient is dictated, and never adds a signature.
+
+Code and Email both use the local model chosen in the model selector; Default
+never calls it.
+
+- **Enhancing state** - When Code or Email is active, the overlay shows an
+  "enhancing" state while the local model works, then types the result.
   Enhancement adds processing time; it is not instantaneous.
 - **Local-only privacy boundary** - Enhancement runs against a local Ollama server
   on `127.0.0.1` only. No transcript or prompt text leaves your machine, and there
   is no configurable remote endpoint.
-- **Agent Skill selection without execution** - SIQspeak reads bounded YAML
-  metadata from Agent Skill files in your workspace and home directory to suggest
-  relevant skill names in the prompt. It never opens, interprets, or executes a
-  skill body - skill names and descriptions are treated as untrusted catalog data.
-- **Workspace override** - Skill discovery looks at the detected workspace of the
-  active window (ascending to a Git root). You can override the workspace folder in
-  settings; the override persists and invalid auto-detection never guesses.
-- **Raw fallback behavior** - If enhancement is disabled, Ollama is not running,
-  the model is missing, or the response is malformed, SIQspeak types the preserved
-  raw transcript. Enhancement never loses your words.
+- **Agent Skill selection without execution** (Code mode) - SIQspeak reads bounded
+  YAML metadata from Agent Skill files in your workspace and home directory to
+  suggest relevant skill names in the prompt. It never opens, interprets, or
+  executes a skill body - skill names and descriptions are treated as untrusted
+  catalog data.
+- **Workspace override** (Code mode) - Skill discovery looks at the detected
+  workspace of the active window (ascending to a Git root). You can override the
+  workspace folder in settings; the override persists and invalid auto-detection
+  never guesses.
+- **Raw fallback behavior** - In Default mode, or if Ollama is not running, the
+  model is missing, or the response is malformed, SIQspeak types the preserved raw
+  transcript. Enhancement never loses your words.
 
 ### Ollama requirements
 
@@ -184,8 +194,8 @@ Speech models download anonymously from Hugging Face on first use (`base.en` is 
 - If you're behind a corporate firewall/proxy, you may need to download the model manually
 
 ### Enhancement does nothing / types the raw transcript
-Prompt enhancement is off by default and falls back to the raw transcript whenever it cannot run. Check that:
-- Enhancement is toggled on in the settings panel
+Default mode always types the raw transcript, and Code/Email fall back to the raw transcript whenever they cannot run. Check that:
+- The mode is set to Code or Email in the settings panel (not Default)
 - Ollama is installed and running ([ollama.com/download](https://ollama.com/download))
 - The enhancer model is pulled (`ollama pull qwen3.5:4b`)
 
@@ -223,7 +233,7 @@ Run the checks from the project root:
 .venv/Scripts/python.exe -m pytest
 
 # Enhancement package coverage
-.venv/Scripts/python.exe -m pytest tests/test_skills.py tests/test_ollama.py tests/test_prompt.py tests/test_enhancement_service.py --cov=siqspeak.enhancement --cov-report=term-missing
+.venv/Scripts/python.exe -m pytest tests/test_skills.py tests/test_ollama.py tests/test_prompt.py tests/test_enhancement_service.py tests/test_email.py tests/test_context.py --cov=siqspeak.enhancement --cov-report=term-missing
 ```
 
 ## License

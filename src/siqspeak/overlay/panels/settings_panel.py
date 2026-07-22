@@ -1,4 +1,4 @@
-"""Settings panel: microphone, prompt enhancement, workspace, and Quit.
+"""Settings panel: microphone, enhancement mode (Default/Code/Email), workspace, and Quit.
 
 Layout geometry lives in one pure place (:func:`_settings_layout`) so the
 renderer and the click hit-tester (:func:`settings_action_at_y`) never drift.
@@ -60,7 +60,7 @@ class SettingsAction(str, Enum):
     """Stable identifiers for each clickable settings region."""
 
     MICROPHONE = "microphone"
-    ENHANCEMENT_TOGGLE = "enhancement_toggle"
+    MODE = "mode"
     WORKSPACE = "workspace"
     ENHANCER_MODEL = "enhancer_model"
     INSTALL_MODEL = "install_model"
@@ -87,12 +87,15 @@ def _settings_layout(state: AppState) -> list[SettingsRow]:
     y = SETTINGS_HEADER_H + SETTINGS_PAD
     plan: list[tuple[SettingsAction, int]] = [
         (SettingsAction.MICROPHONE, _mic_section_height(state)),
-        (SettingsAction.ENHANCEMENT_TOGGLE, SETTINGS_ROW_H),
+        (SettingsAction.MODE, SETTINGS_ROW_H),
         (SettingsAction.WORKSPACE, SETTINGS_ROW_H),
-        (SettingsAction.ENHANCER_MODEL, SETTINGS_ROW_H),
-        (SettingsAction.INSTALL_MODEL, SETTINGS_STATUS_H),
-        (SettingsAction.QUIT, QUIT_BTN_H),
     ]
+    # The enhancer model + install/status only matter when an AI mode is active;
+    # Default types the raw transcript and needs no local model.
+    if state.enhancement_mode != "default":
+        plan.append((SettingsAction.ENHANCER_MODEL, SETTINGS_ROW_H))
+        plan.append((SettingsAction.INSTALL_MODEL, SETTINGS_STATUS_H))
+    plan.append((SettingsAction.QUIT, QUIT_BTN_H))
     rows: list[SettingsRow] = []
     for action, height in plan:
         rows.append(SettingsRow(action, y, height))
@@ -118,6 +121,19 @@ def _settings_panel_height(state: AppState) -> int:
 # ---------------------------------------------------------------------------
 # Display helpers (pure)
 # ---------------------------------------------------------------------------
+_MODE_DESCRIPTIONS: dict[str, str] = {
+    "default": "raw transcript, no AI",
+    "code": "AI: structured coding brief from your repo",
+    "email": "AI: polished email (greeting + body, no signature)",
+}
+
+
+def _mode_display(state: AppState) -> tuple[str, str]:
+    """Return (label, description) for the active enhancement mode."""
+    mode = state.enhancement_mode
+    return (mode.capitalize(), _MODE_DESCRIPTIONS[mode])
+
+
 def _model_requirement_label(state: AppState) -> str:
     """Selected-model line, e.g. ``qwen3.5:4b · Balanced · ~3.4 GB · needs ~6 GB``."""
     spec = enhancement_model_spec(state.enhancement_model)
@@ -170,7 +186,7 @@ def _settings_render_signature(state: AppState) -> tuple:
         state.mic_expanded,
         state.mic_device,
         len(state.mic_devices),
-        state.enhancement_enabled,
+        state.enhancement_mode,
         state.enhancement_model,
         state.enhancement_status,
         int(state.enhancement_pull_progress * 100),
@@ -230,21 +246,22 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     _draw_microphone(draw, state, rows[SettingsAction.MICROPHONE],
                      text_left, value_right, card_left, card_right, font_label, font_value)
 
-    _draw_card(draw, card_left, rows[SettingsAction.ENHANCEMENT_TOGGLE], card_right)
-    _draw_toggle(draw, state, rows[SettingsAction.ENHANCEMENT_TOGGLE],
-                 text_left, value_right, font_label)
+    _draw_card(draw, card_left, rows[SettingsAction.MODE], card_right)
+    _draw_mode(draw, state, rows[SettingsAction.MODE],
+               text_left, value_right, font_label, font_meta, font_chip)
 
     _draw_card(draw, card_left, rows[SettingsAction.WORKSPACE], card_right)
     _draw_workspace(draw, state, rows[SettingsAction.WORKSPACE],
                     text_left, value_right, font_label, font_meta, font_chip)
 
-    _draw_card(draw, card_left, rows[SettingsAction.ENHANCER_MODEL], card_right)
-    _draw_model(draw, state, rows[SettingsAction.ENHANCER_MODEL],
-                text_left, value_right, font_label, font_meta, font_chip)
+    if SettingsAction.ENHANCER_MODEL in rows:
+        _draw_card(draw, card_left, rows[SettingsAction.ENHANCER_MODEL], card_right)
+        _draw_model(draw, state, rows[SettingsAction.ENHANCER_MODEL],
+                    text_left, value_right, font_label, font_meta, font_chip)
 
-    _draw_card(draw, card_left, rows[SettingsAction.INSTALL_MODEL], card_right)
-    _draw_status(draw, state, rows[SettingsAction.INSTALL_MODEL],
-                 text_left, value_right, card_left, card_right, font_label, font_meta, font_chip)
+        _draw_card(draw, card_left, rows[SettingsAction.INSTALL_MODEL], card_right)
+        _draw_status(draw, state, rows[SettingsAction.INSTALL_MODEL],
+                     text_left, value_right, card_left, card_right, font_label, font_meta, font_chip)
 
     _draw_quit(draw, rows[SettingsAction.QUIT], card_left, card_right, panel_w, font_btn)
 
@@ -299,22 +316,21 @@ def _draw_microphone(
         dev_y += MIC_ROW_H
 
 
-def _draw_toggle(draw, state, row, text_left, value_right, font_label) -> None:
-    cy = row.y + row.height // 2
-    draw.text((text_left, cy - 9), "Enhance prompts", font=font_label, fill=(*WHITE, 255))
+def _draw_mode(draw, state, row, text_left, value_right, font_label, font_meta, font_chip) -> None:
+    draw.text((text_left, row.y + 7), "Mode", font=font_label, fill=(*WHITE, 255))
 
-    track_w, track_h = 46, 22
-    tx1 = value_right
-    tx0 = tx1 - track_w
-    ty0 = cy - track_h // 2
-    on = state.enhancement_enabled
-    track = CYAN if on else GRAY
-    draw.rounded_rectangle([tx0, ty0, tx1, ty0 + track_h], radius=track_h // 2, fill=(*track, 255))
-    knob_r = track_h // 2 - 3
-    knob_cx = (tx1 - knob_r - 3) if on else (tx0 + knob_r + 3)
-    draw.ellipse(
-        [knob_cx - knob_r, cy - knob_r, knob_cx + knob_r, cy + knob_r], fill=(255, 255, 255, 255),
+    label, description = _mode_display(state)
+    chip_w = int(draw.textlength(label, font=font_chip)) + 16
+    chip_x1 = value_right
+    chip_x0 = chip_x1 - chip_w
+    chip_y = row.y + 8
+    draw.rounded_rectangle(
+        [chip_x0, chip_y, chip_x1, chip_y + 18], radius=9, fill=(*_ACCENT_SOFT, 255),
     )
+    draw.text((chip_x0 + 8, chip_y + 2), label, font=font_chip, fill=(*CYAN, 255))
+
+    description = _truncate_to_width(draw, description, font_meta, value_right - text_left)
+    draw.text((text_left, row.y + 27), description, font=font_meta, fill=(*GRAY, 210))
 
 
 def _draw_workspace(draw, state, row, text_left, value_right, font_label, font_meta, font_chip) -> None:

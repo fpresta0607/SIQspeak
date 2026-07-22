@@ -36,7 +36,7 @@ def test_independent_instances():
 
 def test_enhancement_defaults_are_memory_friendly():
     state = AppState()
-    assert state.enhancement_enabled is False
+    assert state.enhancement_mode == "default"
     # There is one enhancer model; the default is tied to the single constant.
     assert state.enhancement_model == ENHANCEMENT_MODEL
     assert state.workspace_override is None
