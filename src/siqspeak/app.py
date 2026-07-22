@@ -443,7 +443,7 @@ def _install_enhancer(state: AppState) -> None:
             style = ()
         return enhance_request(
             raw_text,
-            enabled=state.enhancement_enabled,
+            enabled=True,
             model=state.enhancement_model,
             client=client,
             catalog=catalog,

@@ -288,8 +288,6 @@ def save_state_config(state: AppState) -> None:
         "pill_y": state.pill_user_y,
         "mic_device": state.mic_device,
         "enhancement_mode": state.enhancement_mode,
-        # Legacy mirror kept until Phase 3/4 migrate the toggle readers/writers.
-        "enhancement_enabled": state.enhancement_enabled,
         "enhancement_model": state.enhancement_model,
         "workspace_override": state.workspace_override,
     })

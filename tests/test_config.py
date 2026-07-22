@@ -181,7 +181,7 @@ def test_save_state_config_does_not_persist_device(tmp_path, monkeypatch):
         "pill_y": 200,
         "mic_device": 3,
         "enhancement_mode": "default",
-        "enhancement_enabled": False,
         "enhancement_model": "qwen3.5:4b",
         "workspace_override": None,
     }
+    assert "enhancement_enabled" not in result

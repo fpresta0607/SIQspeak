@@ -9,6 +9,7 @@ from siqspeak.config import (
     _ZONE_PANEL,
     AVAILABLE_MODELS,
     ENHANCEMENT_MODELS,
+    ENHANCEMENT_MODES,
     IDLE_H,
     IDLE_ICON_ZONE_W,
     IDLE_W,
@@ -194,9 +195,10 @@ def _handle_model_click(state: AppState) -> None:
             _show_model_panel(state)
 
 
-def _apply_enhancement_toggle(state: AppState) -> None:
-    """Flip the prompt-enhancement toggle and persist immediately."""
-    state.enhancement_enabled = not state.enhancement_enabled
+def _cycle_enhancement_mode(state: AppState) -> None:
+    """Advance the enhancement mode (default -> code -> email -> default) and persist."""
+    index = ENHANCEMENT_MODES.index(state.enhancement_mode)
+    state.enhancement_mode = ENHANCEMENT_MODES[(index + 1) % len(ENHANCEMENT_MODES)]
     save_state_config(state)
 
 
@@ -287,8 +289,8 @@ def _handle_settings_click(state: AppState) -> None:
         return
     if action == SettingsAction.MICROPHONE:
         _handle_mic_click(state, ry)
-    elif action == SettingsAction.ENHANCEMENT_TOGGLE:
-        _apply_enhancement_toggle(state)
+    elif action == SettingsAction.MODE:
+        _cycle_enhancement_mode(state)
     elif action == SettingsAction.WORKSPACE:
         folder = select_folder(hwnd=state.settings_panel_hwnd or 0)
         if _apply_workspace_selection(state, folder):
