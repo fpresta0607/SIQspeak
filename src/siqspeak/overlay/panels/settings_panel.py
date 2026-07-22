@@ -1,4 +1,4 @@
-"""Settings panel: microphone, prompt enhancement, workspace, and Quit.
+"""Settings panel: microphone, enhancement mode (Default/Code/Email), workspace, and Quit.
 
 Layout geometry lives in one pure place (:func:`_settings_layout`) so the
 renderer and the click hit-tester (:func:`settings_action_at_y`) never drift.
