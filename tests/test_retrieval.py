@@ -17,6 +17,8 @@ from siqspeak.enhancement.retrieval import (
     MAX_HITS,
     MAX_LINE_BYTES,
     MAX_TOTAL_CHARS,
+    _build_pattern,
+    _rg_pattern_source,
     retrieve_snippets,
 )
 
@@ -262,4 +264,58 @@ def test_never_raises_on_unreadable_tree(tmp_path: Path, monkeypatch: pytest.Mon
     monkeypatch.setattr("siqspeak.enhancement.retrieval.os.walk", _boom)
 
     # Must swallow the failure and return a value, never propagate.
+    assert retrieve_snippets(("needle",), tmp_path) == ()
+
+
+def test_embedded_secret_value_is_redacted_from_snippet(tmp_path: Path) -> None:
+    # FIX 1: a secret assigned inside an ordinary source file (not a denylisted
+    # secret file) must never reach the snippet — key kept, value redacted.
+    src = tmp_path / "settings.py"
+    src.write_text('db_password = "hunter2"\n', encoding="utf-8")
+
+    findings = retrieve_snippets(("db_password",), tmp_path)
+
+    assert len(findings) == 1
+    assert "db_password" in findings[0].text
+    assert "hunter2" not in findings[0].text
+    assert "[redacted]" in findings[0].text
+
+
+def test_walk_enumeration_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # FIX 2: the walk stops collecting once MAX_WALK_ENTRIES files are seen.
+    monkeypatch.setattr("siqspeak.enhancement.retrieval.MAX_WALK_ENTRIES", 5)
+    from siqspeak.enhancement.retrieval import _walk_candidate_files
+
+    for i in range(20):
+        (tmp_path / f"f{i:02d}.py").write_text("x\n", encoding="utf-8")
+
+    files = _walk_candidate_files(tmp_path)
+
+    assert len(files) <= 5
+
+
+def test_rg_pattern_source_has_no_lookaround_but_build_pattern_keeps_boundaries() -> None:
+    # FIX 3: rg's Rust regex cannot compile lookaround, so its file-narrowing
+    # pattern must be a plain alternation; the Python pattern keeps boundaries.
+    rg_source = _rg_pattern_source(("a", "b_c"))
+    assert "(?<" not in rg_source
+    assert "(?!" not in rg_source
+    assert rg_source == "(a|b_c)"
+
+    precise = _build_pattern(("a", "b_c"))
+    assert precise is not None
+    assert "(?<![a-z0-9]" in precise.pattern
+    assert "(?![a-z0-9]" in precise.pattern
+
+
+def test_never_raises_on_ranking_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # FIX 4: a raise in the sort/budget path (here a non-int score) must be
+    # swallowed too, not just failures inside the walk/read loop.
+    (tmp_path / "app.py").write_text("needle\n", encoding="utf-8")
+
+    def _bad_scores(*args: object, **kwargs: object) -> list:
+        return [("not-an-int", "app.py:1", object())]
+
+    monkeypatch.setattr("siqspeak.enhancement.retrieval._search_text", _bad_scores)
+
     assert retrieve_snippets(("needle",), tmp_path) == ()

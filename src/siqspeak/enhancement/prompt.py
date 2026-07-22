@@ -33,7 +33,12 @@ _EXFIL_RE = re.compile(
     r"|\bsk-\S+"                      # OpenAI-style secret key
     r"|ghp_\S+"                       # GitHub personal access token
     r"|xox[baprs]-\S+"              # Slack token
-    r"|Bearer\s+\S+",                # Authorization bearer token
+    r"|Bearer\s+\S+"                 # Authorization bearer token
+    # Generic secret assignment (last line of defense before SendInput): a key
+    # naming a credential followed by = / : and its value.
+    r"|\b\w*(?:password|passwd|pwd|secret|token|api[_-]?key|apikey"
+    r"|access[_-]?key|client[_-]?secret|private[_-]?key|auth)\w*\s*[=:]\s*"
+    r"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|\S+)",
     re.IGNORECASE,
 )
 

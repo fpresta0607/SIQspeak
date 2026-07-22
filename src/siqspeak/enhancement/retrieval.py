@@ -38,6 +38,9 @@ MAX_SNIPPET_CHARS = 1200
 MAX_HITS = 8
 MAX_TOTAL_CHARS = 10_000
 CONTEXT_LINES = 3
+# Cap the walk enumeration so a pathological/huge root can't stall the
+# synchronous hotkey->type path before any per-file cap even applies.
+MAX_WALK_ENTRIES = 20_000
 
 RG_TIMEOUT_SECONDS = 5
 
@@ -76,6 +79,25 @@ _CATEGORY = {
 }
 _MD_HEADER_RE = re.compile(r"^\s{0,3}#{1,6}\s")
 
+# Redact secret VALUES embedded inside otherwise-allowlisted files (e.g. a
+# `SMTP_PASSWORD = "..."` in a .py) so a secret is never injected into the prompt
+# nor echoed/typed. The key is kept so the snippet still reads sensibly; only the
+# assigned value is replaced. Case-insensitive; conservative by design.
+_SECRET_KEYWORDS = (
+    r"password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key"
+    r"|client[_-]?secret|private[_-]?key|auth"
+)
+_SECRET_ASSIGN_RE = re.compile(
+    r"(\b\w*(?:" + _SECRET_KEYWORDS + r")\w*\s*[=:]\s*)"
+    r"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s\r\n]+)",
+    re.IGNORECASE,
+)
+
+
+def _redact_secrets(snippet: str) -> str:
+    """Replace secret assignment values with ``[redacted]``, keeping the key."""
+    return _SECRET_ASSIGN_RE.sub(r"\1[redacted]", snippet)
+
 
 def retrieve_snippets(terms: tuple[str, ...], root: Path) -> tuple[ContextFinding, ...]:
     """Return ranked, bounded, ``path:line``-attributed snippets matching ``terms``.
@@ -97,7 +119,7 @@ def retrieve_snippets(terms: tuple[str, ...], root: Path) -> tuple[ContextFindin
         if pattern is None:
             return ()
 
-        candidates = _candidate_files(root_path, pattern.pattern)
+        candidates = _candidate_files(root_path, _rg_pattern_source(terms))
         scored: list[tuple[int, str, ContextFinding]] = []
         searched = 0
         for path in candidates:
@@ -112,22 +134,23 @@ def retrieve_snippets(terms: tuple[str, ...], root: Path) -> tuple[ContextFindin
             searched += 1
             relpath = path.relative_to(root_path).as_posix()
             scored.extend(_search_text(text, pattern, relpath, file_type))
+
+        # Ranking + budget live inside the try so a raise here (bad sort key,
+        # oversized text) still honors the never-raises contract.
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        result: list[ContextFinding] = []
+        total_chars = 0
+        for _, _, finding in scored:
+            if len(result) >= MAX_HITS:
+                break
+            if total_chars + len(finding.text) > MAX_TOTAL_CHARS:
+                continue
+            result.append(finding)
+            total_chars += len(finding.text)
+        return tuple(result)
     except Exception:
         # Best-effort: any unexpected failure yields no findings, never propagates.
         return ()
-
-    scored.sort(key=lambda item: (-item[0], item[1]))
-
-    result: list[ContextFinding] = []
-    total_chars = 0
-    for _, _, finding in scored:
-        if len(result) >= MAX_HITS:
-            break
-        if total_chars + len(finding.text) > MAX_TOTAL_CHARS:
-            continue
-        result.append(finding)
-        total_chars += len(finding.text)
-    return tuple(result)
 
 
 def _build_pattern(terms: tuple[str, ...]) -> re.Pattern[str] | None:
@@ -144,6 +167,18 @@ def _build_pattern(terms: tuple[str, ...]) -> re.Pattern[str] | None:
     return re.compile(
         r"(?<![a-z0-9])(" + "|".join(escaped) + r")(?![a-z0-9])", re.IGNORECASE,
     )
+
+
+def _rg_pattern_source(terms: tuple[str, ...]) -> str:
+    """Plain escaped alternation for ripgrep's Rust regex (no lookaround).
+
+    ripgrep cannot compile the lookaround boundaries ``_build_pattern`` uses, so
+    the fast-path would always error and never run. rg only narrows the candidate
+    *file* list; the precise ``_build_pattern`` still gates every line in Python,
+    so rg's looser match can never widen or loosen the final results.
+    """
+    escaped = [re.escape(term) for term in terms if term]
+    return "(" + "|".join(escaped) + ")"
 
 
 def _candidate_files(root: Path, pattern_source: str) -> list[Path]:
@@ -167,6 +202,8 @@ def _walk_candidate_files(root: Path) -> list[Path]:
         dirnames[:] = [name for name in dirnames if name not in PRUNE_DIRS]
         for filename in filenames:
             files.append(Path(dirpath) / filename)
+            if len(files) >= MAX_WALK_ENTRIES:
+                return files
     return files
 
 
@@ -246,7 +283,7 @@ def _search_text(
 
     scored: list[tuple[int, str, ContextFinding]] = []
     for start, end, anchor, terms in _merge_hits(hits):
-        snippet = "\n".join(lines[start:end]).strip()[:MAX_SNIPPET_CHARS]
+        snippet = _redact_secrets("\n".join(lines[start:end]).strip()[:MAX_SNIPPET_CHARS])
         if not snippet:
             continue
         distinct = len(terms)
