@@ -267,6 +267,29 @@ def test_build_prompt_brief_redacts_secret_patterns(secret: str) -> None:
     assert "[redacted]" in brief.requested_outcome
 
 
+def test_build_prompt_brief_redacts_generic_secret_assignment() -> None:
+    # FIX 5: the model's own output is scrubbed for generic secret assignments,
+    # not just vendor token shapes — last line of defense before SendInput.
+    payload = _valid_payload()
+    payload["requested_outcome"] = 'api_password = "leak123" in the config'
+
+    brief = build_prompt_brief(payload, ())
+
+    assert "leak123" not in brief.requested_outcome
+    assert "[redacted]" in brief.requested_outcome
+
+
+def test_format_prompt_scrubs_generic_secret_assignment() -> None:
+    payload = _valid_payload()
+    payload["current_state_evidence"] = 'api_password = "leak123"'
+
+    brief = build_prompt_brief(payload, ())
+    output = format_prompt("raw request", brief)
+
+    assert "leak123" not in output
+    assert "[redacted]" in output
+
+
 def test_build_prompt_brief_drops_blank_list_items() -> None:
     payload = _valid_payload()
     payload["sources_of_truth"] = ["real", "  ", ""]

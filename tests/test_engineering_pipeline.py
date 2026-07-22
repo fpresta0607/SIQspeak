@@ -199,9 +199,10 @@ def test_concrete_feature_matches_relevant_doc_into_sources(tmp_path: Path) -> N
     assert "## System Architecture Findings" in result.final_text
     assert "## Sources of Truth" in result.final_text
 
-    # The relevance-matched doc (mentions "documentation"/"context") is extracted.
+    # The relevance-matched doc (mentions "documentation"/"context") is extracted
+    # as a path:line grep snippet.
     extracted_paths = [finding.source_path for finding in findings]
-    assert "docs/enhancement.md" in extracted_paths
+    assert any(path.startswith("docs/enhancement.md") for path in extracted_paths)
     assert "docs/enhancement.md" in _sources_section(result.final_text)
 
 
