@@ -32,7 +32,11 @@ class OllamaClient:
     """Minimal client for the local Ollama HTTP API, loopback only."""
 
     base_url: str = "http://127.0.0.1:11434"
-    timeout_seconds: float = 45.0
+    # Code-mode enhancement runs a full engineering-brief generation on a local
+    # model; on a cold model load or a larger selection the first token can take
+    # well over 45s. Keep the ceiling generous so a slow-but-working run completes
+    # rather than falling back to the raw transcript.
+    timeout_seconds: float = 120.0
 
     def __post_init__(self) -> None:
         host = urllib.parse.urlsplit(self.base_url).hostname

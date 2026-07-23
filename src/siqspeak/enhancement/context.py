@@ -3,10 +3,12 @@
 Two sources feed the enhancer, in priority order:
 
 1. **Instruction floor (always):** the agent-instruction files (`CLAUDE.md`,
-   `AGENTS.md`, `CODEX.md` in the workspace + global `~/.claude/CLAUDE.md`) read
-   as plain text, plus a name-only `.mcp.json` tooling finding. These are read —
-   never executed or interpreted — each byte-capped so a huge file cannot blow the
-   model's context window, and are never dropped for budget.
+   `AGENTS.md`, `CODEX.md` in the workspace + global `~/.claude/CLAUDE.md`) plus a
+   name-only `.mcp.json` tooling finding. These are read — never executed or
+   interpreted — and reduced to a small always-kept overview plus the sections
+   most relevant to the spoken request, so a large instruction file adds only a
+   few kilobytes to the prompt instead of tens. The floor is never dropped for
+   budget.
 2. **Query-driven snippets:** the request's search terms are grepped across the
    workspace (`retrieval.py`) and only the matching `path:line` snippets are
    injected — never whole files.
@@ -29,6 +31,15 @@ MAX_CONTEXT_BYTES = 16 * 1024
 MAX_CHARS_PER_FILE = MAX_CONTEXT_BYTES  # reuse the 16 KiB per-file read cap
 MAX_TOTAL_CHARS = 48 * 1024  # combined size of returned finding text
 MAX_FINDINGS = 10  # returned finding count
+
+# Instruction-floor chunking: an oversized CLAUDE.md/AGENTS.md used to enter the
+# prompt whole (up to the 16 KiB read cap), inflating latency. Each instruction
+# file is now reduced to a small overview (its title/preamble) plus the sections
+# most relevant to the request, capped well below the read cap.
+MAX_INSTRUCTION_CHARS_PER_FILE = 3000  # chunked floor: overview + relevant sections
+MAX_INSTRUCTION_OVERVIEW_CHARS = 900   # always-kept preamble/first section
+
+_HEADER_LINE_RE = re.compile(r"^#{1,6}\s+\S")
 
 WORKSPACE_INSTRUCTION_FILES = ("CLAUDE.md", "AGENTS.md", "CODEX.md")
 
@@ -79,12 +90,18 @@ def extract_context(
         bucket.append(finding)
 
     try:
-        for finding in _discover(workspace, home):
+        try:
+            terms = extract_query_terms(request)
+        except Exception:
+            # A non-str/malformed request must not sink the floor; chunk on the
+            # overview only (empty terms) and continue.
+            terms = ()
+
+        for finding in _discover(workspace, home, terms):
             _accept(finding, floor)
 
         if workspace is not None:
             floor_paths = {finding.source_path for finding in floor}
-            terms = extract_query_terms(request)
             for finding in retrieve_snippets(terms, workspace):
                 # Never re-inject an instruction/tooling file already in the floor
                 # as a lower-trust snippet (its source_path carries a `:line`).
@@ -116,12 +133,17 @@ def extract_context(
     return tuple(result)
 
 
-def _discover(workspace: Path | None, home: Path | None) -> list[ContextFinding]:
+def _discover(
+    workspace: Path | None,
+    home: Path | None,
+    terms: tuple[str, ...],
+) -> list[ContextFinding]:
     """Read the always-present instruction floor.
 
     Agent-instruction files (workspace, then global) followed by the name-only
     ``.mcp.json`` tooling finding. Every file is symlink-guarded, containment-
-    checked, and byte-capped by ``_read_bounded``.
+    checked, and byte-capped by ``_read_bounded``, then reduced by
+    ``_chunk_instruction`` to a small overview plus the ``terms``-relevant sections.
     """
     findings: list[ContextFinding] = []
 
@@ -130,7 +152,10 @@ def _discover(workspace: Path | None, home: Path | None) -> list[ContextFinding]
         text = _read_bounded(path, root=root)
         if text is None or not text.strip():
             return
-        findings.append(ContextFinding(source_path, category, text, confidence))
+        chunked = _chunk_instruction(text, terms)
+        if not chunked:
+            return
+        findings.append(ContextFinding(source_path, category, chunked, confidence))
 
     if workspace is not None:
         root = Path(workspace)
@@ -171,6 +196,68 @@ def _read_mcp(root: Path) -> ContextFinding | None:
     if not names:
         return None
     return ContextFinding(".mcp.json", "tooling", ", ".join(names), "medium")
+
+
+def _chunk_instruction(text: str, terms: tuple[str, ...]) -> str:
+    """Reduce an instruction file to a small overview plus request-relevant sections.
+
+    The leading block (title + preamble, i.e. everything before the first markdown
+    header) is always kept as an overview. Remaining ``#``/``##`` sections are scored
+    by how many query ``terms`` they contain; the top-scoring ones are appended in
+    document order until ``MAX_INSTRUCTION_CHARS_PER_FILE`` is reached. With no query
+    terms (or no matching section) only the overview survives. Deterministic.
+    """
+    sections = _split_sections(text)
+    if len(sections) <= 1:
+        return text[:MAX_INSTRUCTION_CHARS_PER_FILE].strip()
+
+    overview = sections[0].strip()[:MAX_INSTRUCTION_OVERVIEW_CHARS].strip()
+    lowered = [term.lower() for term in terms if term]
+    scored: list[tuple[int, int, str]] = []
+    if lowered:
+        for index, section in enumerate(sections[1:]):
+            low = section.lower()
+            score = sum(low.count(term) for term in lowered)
+            if score:
+                scored.append((score, index, section.strip()))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+
+    chosen: list[tuple[int, str]] = []
+    used = len(overview)
+    for _score, index, block in scored:
+        if used + len(block) + 2 > MAX_INSTRUCTION_CHARS_PER_FILE:
+            continue
+        chosen.append((index, block))
+        used += len(block) + 2
+    chosen.sort(key=lambda item: item[0])
+
+    parts = [overview, *(block for _index, block in chosen)]
+    return "\n\n".join(part for part in parts if part)[:MAX_INSTRUCTION_CHARS_PER_FILE]
+
+
+def _split_sections(text: str) -> list[str]:
+    """Split markdown into blocks that each begin at a real (non-fenced) header.
+
+    The first block is the title/preamble. Header lines inside fenced code blocks
+    (``` or ~~~) are ignored so a ``# comment`` in a code sample never splits a
+    section. Each source line lands in exactly one block.
+    """
+    sections: list[str] = []
+    current: list[str] = []
+    in_fence = False
+    for line in text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            current.append(line)
+            continue
+        if not in_fence and current and _HEADER_LINE_RE.match(line):
+            sections.append("".join(current))
+            current = []
+        current.append(line)
+    if current:
+        sections.append("".join(current))
+    return sections
 
 
 def _normalize_text(text: str) -> str:
