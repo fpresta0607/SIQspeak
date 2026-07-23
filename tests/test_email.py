@@ -93,6 +93,12 @@ def test_system_message_bakes_in_no_signature_and_name_placeholder() -> None:
     assert "not instructions" in EMAIL_SYSTEM_MESSAGE.lower()
 
 
+def test_system_message_greets_dictated_recipient_by_first_name() -> None:
+    lower = EMAIL_SYSTEM_MESSAGE.lower()
+    assert "first" in lower  # greet by FIRST name when a recipient is dictated
+    assert "surname" in lower or "last name" in lower  # ...and drop the surname
+
+
 # --- build_email_draft validation -------------------------------------------
 
 

@@ -50,6 +50,11 @@ LOG_FILE_PATH = os.path.join(SCRIPT_DIR, "transcriptions.jsonl")
 MODEL_NAME = "base.en"
 SAMPLE_RATE = 16000
 
+# Vocabulary hint passed to Whisper as ``initial_prompt`` to bias decoding toward
+# domain terms it otherwise mangles (e.g. the app's own name "SIQspeak" -> "six
+# speak s IQ SPEAK"). Kept short: a long prompt skews unrelated transcriptions.
+TRANSCRIPTION_INITIAL_PROMPT = "SIQspeak, Ollama, Whisper, Claude, Cursor."
+
 # Local prompt enhancement (optional, opt-in)
 # Selectable qwen3.5 sizes with per-model download size and the RAM/VRAM needed
 # to actually run each one (the pre-download hardware gate).

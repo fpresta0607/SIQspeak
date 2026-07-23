@@ -20,6 +20,7 @@ from siqspeak.config import (
     SAMPLE_RATE,
     SILENCE_DURATION,
     SILENCE_RMS_THRESHOLD,
+    TRANSCRIPTION_INITIAL_PROMPT,
 )
 from siqspeak.state import AppState
 from siqspeak.tray import set_state
@@ -247,6 +248,7 @@ def _transcribe_and_type(
         without_timestamps=True,
         condition_on_previous_text=False,
         suppress_blank=True,
+        initial_prompt=TRANSCRIPTION_INITIAL_PROMPT,
     )
     seg_texts = [seg.text.strip() for seg in segments if seg.text.strip()]
     raw_text = " ".join(seg_texts).strip()
