@@ -8,6 +8,7 @@ import pytest
 from siqspeak.enhancement.context import (
     MAX_CHARS_PER_FILE,
     MAX_FINDINGS,
+    MAX_INSTRUCTION_CHARS_PER_FILE,
     MAX_TOTAL_CHARS,
     ContextFinding,
     _is_within,
@@ -91,18 +92,20 @@ def test_extract_includes_agent_instruction_with_zero_overlap(tmp_path: Path) ->
 
 
 def test_extract_caps_per_file_chars(tmp_path: Path) -> None:
+    # A huge header-less instruction file is truncated to the chunk cap, well
+    # below the raw read cap.
     (tmp_path / "CLAUDE.md").write_text("a" * (MAX_CHARS_PER_FILE * 3), encoding="utf-8")
 
     findings = extract_context("a", workspace=tmp_path, home=None)
     claude = next(f for f in findings if f.source_path == "CLAUDE.md")
 
-    assert len(claude.text) <= MAX_CHARS_PER_FILE
+    assert len(claude.text) <= MAX_INSTRUCTION_CHARS_PER_FILE
 
 
-def test_extract_keeps_all_instruction_findings_over_budget(tmp_path: Path) -> None:
-    # Four authoritative instruction files, each capped at MAX_CHARS_PER_FILE and
-    # collectively far larger than MAX_TOTAL_CHARS. The total-chars budget must
-    # NOT drop any of them — instruction findings are always kept.
+def test_extract_keeps_all_instruction_findings_chunked(tmp_path: Path) -> None:
+    # Four authoritative instruction files, each far larger than the per-file
+    # chunk cap. The floor is never dropped for budget AND each file is reduced
+    # to at most MAX_INSTRUCTION_CHARS_PER_FILE (latency: no whole-file dumps).
     workspace = tmp_path / "ws"
     workspace.mkdir()
     home = tmp_path / "home"
@@ -115,10 +118,62 @@ def test_extract_keeps_all_instruction_findings_over_budget(tmp_path: Path) -> N
     findings = extract_context("anything", workspace=workspace, home=home)
     paths = _paths(findings)
 
-    total = sum(len(f.text) for f in findings)
-    assert total > MAX_TOTAL_CHARS  # oversized on purpose
     for expected in ("CLAUDE.md", "AGENTS.md", "CODEX.md", "~/.claude/CLAUDE.md"):
         assert expected in paths, expected
+    for finding in findings:
+        assert len(finding.text) <= MAX_INSTRUCTION_CHARS_PER_FILE
+
+
+def test_chunk_keeps_overview_and_relevant_section_drops_irrelevant(tmp_path: Path) -> None:
+    # A large sectioned CLAUDE.md: the overview is always kept, the section that
+    # matches the request survives, and a far unrelated section is dropped.
+    body = (
+        "# Project\n\nThis is the overview paragraph.\n\n"
+        "## Authentication\n\n" + ("token session login refresh. " * 40) + "\n\n"
+        "## Deployment Weather Trivia\n\n" + ("banana pancake syrup forecast. " * 400) + "\n"
+    )
+    (tmp_path / "CLAUDE.md").write_text(body, encoding="utf-8")
+
+    findings = extract_context("how does authentication login work", workspace=tmp_path, home=None)
+    claude = next(f for f in findings if f.source_path == "CLAUDE.md")
+
+    assert "overview paragraph" in claude.text          # overview always kept
+    assert "Authentication" in claude.text              # relevant section kept
+    assert "banana pancake" not in claude.text          # irrelevant section dropped
+    assert len(claude.text) <= MAX_INSTRUCTION_CHARS_PER_FILE
+
+
+def test_chunk_no_term_match_keeps_overview_only(tmp_path: Path) -> None:
+    # No query term matches any section: only the file's overview survives.
+    body = (
+        "# Project\n\nThe canonical overview.\n\n"
+        "## Build\n\n" + ("compile bundle artifact. " * 40) + "\n"
+    )
+    (tmp_path / "CLAUDE.md").write_text(body, encoding="utf-8")
+
+    findings = extract_context("xylophone zephyr quokka", workspace=tmp_path, home=None)
+    claude = next(f for f in findings if f.source_path == "CLAUDE.md")
+
+    assert "canonical overview" in claude.text
+    assert "compile bundle artifact" not in claude.text
+
+
+def test_chunk_ignores_headers_inside_code_fences(tmp_path: Path) -> None:
+    # A ``# comment`` inside a fenced code block must not be treated as a section
+    # header (it would otherwise split the overview mid-example).
+    body = (
+        "# Project\n\nOverview line.\n\n"
+        "## Running\n\n```bash\n# Preferred entry point\nrun --now\n```\n\n"
+        "the running section body mentions authentication flow.\n"
+    )
+    (tmp_path / "CLAUDE.md").write_text(body, encoding="utf-8")
+
+    findings = extract_context("authentication flow", workspace=tmp_path, home=None)
+    claude = next(f for f in findings if f.source_path == "CLAUDE.md")
+
+    # The Running section (with its fenced comment) survives intact as one block.
+    assert "# Preferred entry point" in claude.text
+    assert "run --now" in claude.text
 
 
 # --- query-driven grep snippets ---

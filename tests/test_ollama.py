@@ -59,7 +59,7 @@ def _patch(monkeypatch: pytest.MonkeyPatch, handler: Any) -> None:
 def test_default_base_url_is_loopback() -> None:
     client = OllamaClient()
     assert client.base_url == "http://127.0.0.1:11434"
-    assert client.timeout_seconds == 45.0
+    assert client.timeout_seconds == 120.0
 
 
 def test_localhost_base_url_allowed() -> None:
