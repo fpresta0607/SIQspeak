@@ -17,6 +17,7 @@ installer_output/
 
 # Runtime
 dictate.log
+dictate.log.*
 config.json
 transcriptions.jsonl
 .env
