@@ -8,14 +8,45 @@ from siqspeak.win32.structs import (
     KEYEVENTF_KEYUP,
     KEYEVENTF_UNICODE,
     VK_CONTROL,
+    VK_RETURN,
     VK_SHIFT,
 )
 
 log = logging.getLogger("siqspeak")
 
 
+def _build_inputs(text: str) -> "ctypes.Array":
+    """Build the SendInput array: one key down + up pair per character.
+
+    Newlines are sent as a real Enter (``VK_RETURN``) keypress, not a Unicode
+    ``\\n`` scan code — Windows does not interpret a Unicode line feed as a line
+    break, so typing it verbatim collapses multi-line output (email drafts, the
+    Code-mode brief) onto a single run-on line. Every other character is a
+    Unicode event, so any glyph types without a per-key virtual-key mapping.
+    """
+    n = len(text) * 2
+    inputs = (INPUT * n)()
+    for i, char in enumerate(text):
+        down = inputs[i * 2]
+        up = inputs[i * 2 + 1]
+        down.type = INPUT_KEYBOARD
+        up.type = INPUT_KEYBOARD
+        if char == "\n":
+            down.ki.wVk = VK_RETURN
+            down.ki.dwFlags = 0
+            up.ki.wVk = VK_RETURN
+            up.ki.dwFlags = KEYEVENTF_KEYUP
+        else:
+            code = ord(char)
+            down.ki.wScan = code
+            down.ki.dwFlags = KEYEVENTF_UNICODE
+            up.ki.wScan = code
+            up.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+    return inputs
+
+
 def type_text(text: str, release_modifiers: bool = True) -> None:
-    """Type text into the focused window using Unicode keyboard events."""
+    """Type text into the focused window using keyboard events."""
     user32 = ctypes.windll.user32
 
     if release_modifiers:
@@ -31,20 +62,10 @@ def type_text(text: str, release_modifiers: bool = True) -> None:
         user32.SendInput(2, ctypes.pointer(release[0]), ctypes.sizeof(INPUT))
         time.sleep(0.05)
 
-    # Send each character as a Unicode key down + key up pair
-    n = len(text) * 2
-    inputs = (INPUT * n)()
-    for i, char in enumerate(text):
-        code = ord(char)
-        inputs[i * 2].type = INPUT_KEYBOARD
-        inputs[i * 2].ki.wVk = 0
-        inputs[i * 2].ki.wScan = code
-        inputs[i * 2].ki.dwFlags = KEYEVENTF_UNICODE
-        inputs[i * 2 + 1].type = INPUT_KEYBOARD
-        inputs[i * 2 + 1].ki.wVk = 0
-        inputs[i * 2 + 1].ki.wScan = code
-        inputs[i * 2 + 1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
-    user32.SendInput(n, ctypes.pointer(inputs[0]), ctypes.sizeof(INPUT))
+    if not text:
+        return
+    inputs = _build_inputs(text)
+    user32.SendInput(len(inputs), ctypes.pointer(inputs[0]), ctypes.sizeof(INPUT))
 
 
 def focus_window(hwnd: int) -> None:

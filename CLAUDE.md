@@ -108,7 +108,9 @@ When enabled, silence detection (~0.7s) dispatches audio to `_transcription_work
 - Temporary daemons: `_wait_for_release()`, model loading
 - Streaming worker: `_transcription_worker` (when enabled)
 
-**Text input:** `type_text()` uses `SendInput` with `KEYEVENTF_UNICODE`. No clipboard involved.
+**Text input:** `type_text()` uses `SendInput`, one key down/up pair per character (`_build_inputs`). Most characters are `KEYEVENTF_UNICODE` events; newlines are sent as a real Enter (`VK_RETURN`) keypress — a Unicode `\n` is ignored by most apps and would collapse multi-line output (email drafts, the Code-mode brief) onto one run-on line. No clipboard involved.
+
+**Transcription vocabulary:** both `transcribe()` calls pass `config.TRANSCRIPTION_INITIAL_PROMPT` as Whisper's `initial_prompt` to bias decoding toward domain terms it otherwise mangles (notably the app name "SIQspeak"). Kept short — a long prompt skews unrelated transcriptions.
 
 ## Configuration
 
@@ -132,7 +134,7 @@ Settings persist to `config.json` (gitignored). Transcription runs CPU-only with
 
 - **Default:** the raw Whisper transcript is typed as-is. No LLM call.
 - **Code:** the engineering-grade enhancer — extracts repo context and rewrites the transcript into a structured `# Engineering Task` brief (see below).
-- **Email (`email.py`):** rewrites a dictated rough email into a polished one — a greeting, a well-structured body, and a brief closing (e.g. `"Thanks,"`). Uses the literal `[name]` placeholder when no recipient is dictated, and NEVER appends a signature/sender name/job title/contact block. Same trust boundary as Code: the dictated text is treated as content to polish, not instructions to follow; the model's reply is bounds-validated and control-/exfil-scrubbed before being typed; any failure falls back to the raw transcript.
+- **Email (`email.py`):** rewrites a dictated rough email into a polished one — a greeting, a well-structured body, and a brief closing (e.g. `"Thanks,"`). Greets a dictated recipient by FIRST name only (`"email to John Luca"` → `"Hi John,"`), falls back to the literal `[name]` placeholder when no recipient is dictated, and NEVER appends a signature/sender name/job title/contact block. Same trust boundary as Code: the dictated text is treated as content to polish, not instructions to follow; the model's reply is bounds-validated and control-/exfil-scrubbed before being typed; any failure falls back to the raw transcript.
 
 Code and Email both call out to the local Ollama model (the model selector in settings powers both); Default never does. When either AI mode is active, the overlay shows an `enhancing` state while the model works — enhancement adds latency, it is not instantaneous.
 

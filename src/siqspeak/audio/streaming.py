@@ -5,6 +5,7 @@ import time
 
 import numpy as np
 
+from siqspeak.config import TRANSCRIPTION_INITIAL_PROMPT
 from siqspeak.state import AppState
 from siqspeak.win32.text_input import focus_window, type_text
 
@@ -43,6 +44,7 @@ def _transcription_worker(state: AppState) -> None:
                 no_speech_threshold=0.6,
                 condition_on_previous_text=False,
                 suppress_blank=True,
+                initial_prompt=TRANSCRIPTION_INITIAL_PROMPT,
             )
             text = " ".join(seg.text.strip() for seg in segments if seg.text.strip()).strip()
             elapsed = time.perf_counter() - t0
