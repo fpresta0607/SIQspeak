@@ -15,10 +15,78 @@ from siqspeak.interaction.click_handlers import (
     _apply_workspace_selection,
     _cycle_enhancement_mode,
     _cycle_enhancer_model,
+    _handle_enhancer_click,
     _install_model_action,
+)
+from siqspeak.overlay.panels.settings_panel import (
+    ENHANCER_MODEL_SUBZONE_H,
+    SETTINGS_ROW_H,
+    SettingsAction,
+    _settings_layout,
 )
 from siqspeak.state import AppState
 from siqspeak.win32 import folder_dialog
+
+
+def _enhancer_row(state: AppState):
+    return next(r for r in _settings_layout(state) if r.action == SettingsAction.ENHANCER)
+
+
+def test_enhancer_header_click_toggles_drawer() -> None:
+    state = AppState()
+    state.enhancement_mode = "code"
+    row = _enhancer_row(state)
+
+    _handle_enhancer_click(state, row.y + 1)
+    assert state.enhancer_drawer_expanded is True
+
+    row = _enhancer_row(state)  # band grew; header is still the top SETTINGS_ROW_H
+    _handle_enhancer_click(state, row.y + 1)
+    assert state.enhancer_drawer_expanded is False
+
+
+def test_enhancer_model_subzone_click_cycles_model(_cfg, monkeypatch) -> None:
+    monkeypatch.setattr(click_handlers, "_refresh_enhancer_status", lambda s: None)
+    state = AppState()
+    state.enhancement_mode = "code"
+    state.enhancer_drawer_expanded = True
+    assert state.enhancement_model == "qwen3.5:4b"
+
+    row = _enhancer_row(state)
+    _handle_enhancer_click(state, row.y + SETTINGS_ROW_H + 1)
+
+    assert state.enhancement_model == "qwen3.5:9b"
+
+
+def test_enhancer_action_subzone_click_invokes_install(monkeypatch) -> None:
+    state = AppState()
+    state.enhancement_mode = "code"
+    state.enhancer_drawer_expanded = True
+    state.enhancement_status = "model_missing"
+    pulled: list[object] = []
+    monkeypatch.setattr(click_handlers, "_start_model_pull", lambda s: pulled.append(s))
+    monkeypatch.setattr(click_handlers, "can_run_model", lambda _min_gb: (True, "31.7 GB RAM"))
+
+    row = _enhancer_row(state)
+    _handle_enhancer_click(state, row.y + SETTINGS_ROW_H + ENHANCER_MODEL_SUBZONE_H + 1)
+
+    assert pulled == [state]
+
+
+def test_enhancer_body_click_ignored_when_collapsed(monkeypatch) -> None:
+    state = AppState()
+    state.enhancement_mode = "code"
+    pulled: list[object] = []
+    monkeypatch.setattr(click_handlers, "_start_model_pull", lambda s: pulled.append(s))
+    monkeypatch.setattr(click_handlers, "_refresh_enhancer_status", lambda s: None)
+
+    row = _enhancer_row(state)
+    # A y below the header maps nowhere while collapsed (band is only the header tall),
+    # but calling the handler directly must be a no-op when not expanded.
+    _handle_enhancer_click(state, row.y + SETTINGS_ROW_H + ENHANCER_MODEL_SUBZONE_H + 1)
+
+    assert pulled == []
+    assert state.enhancement_model == "qwen3.5:4b"
 
 
 @pytest.mark.parametrize(

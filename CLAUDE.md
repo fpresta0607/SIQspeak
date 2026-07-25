@@ -58,7 +58,7 @@ src/siqspeak/
       __init__.py          # _hide_all_panels(), _toggle_panel(), _show_panel_window(), _update_panel_content()
       log_panel.py         # transcription log panel
       model_panel.py       # model selector panel
-      settings_panel.py    # settings panel (mic, quit)
+      settings_panel.py    # settings panel (mic, mode, enhancer drawer, workspace, quit)
       welcome.py           # welcome tooltip
   interaction/
     click_handlers.py      # idle pill click, model click, settings click
@@ -96,7 +96,7 @@ All panels share consistent styling: 14px corner radius, opaque background, head
 
 - **Log panel:** Recent transcriptions with timestamps and copy buttons. Persisted to `transcriptions.jsonl`. Mouse wheel scroll via `WH_MOUSE_LL` hook.
 - **Model selector:** Cached models load on click. Uncached models require two-click confirmation with progress bar.
-- **Settings panel:** Mic selector and Quit button.
+- **Settings panel:** Mic selector, enhancement Mode, a collapsible **Enhancer drawer** (Code/Email only — model-cycle + hardware requirement + Ready/Download status, mirroring the mic dropdown), Workspace, and Quit. All rows are single-sourced in `_settings_layout` so render and click hit-testing never drift.
 
 **Streaming transcription (opt-in):**
 When enabled, silence detection (~0.7s) dispatches audio to `_transcription_worker` via `queue.Queue`. Streaming types raw Whisper text incrementally.
@@ -121,7 +121,7 @@ Settings persist to `config.json` (gitignored). Transcription runs CPU-only with
 **Constants in `config.py`:**
 - `MODEL_NAME` — `"base.en"` default
 - `SPEECH_MODELS` — curated English catalog: `tiny.en`, `base.en`, `small.en`, `distil-medium.en`, `distil-large-v3.5` (name/tier/size). `AVAILABLE_MODELS` and `MODEL_SIZES_MB` derive from it.
-- `ENHANCEMENT_MODELS` — selectable qwen3.5 catalog (`qwen3.5:2b`/`4b`/`9b`) with per-model `download_gb` + `min_gb` (RAM/VRAM needed to run), which gate the pre-download hardware check. `ENHANCEMENT_MODEL` = `"qwen3.5:4b"` is the default selection; `enhancement_model_spec(name)` looks up a catalog entry and `resolve_enhancement_model(name)` validates a persisted choice. The settings panel cycles the model, shows its size + hardware requirement + Ready/Download state, and persists the choice.
+- `ENHANCEMENT_MODELS` — selectable qwen3.5 catalog (`qwen3.5:2b`/`4b`/`9b`) with per-model `download_gb` + `min_gb` (RAM/VRAM needed to run), which gate the pre-download hardware check. `ENHANCEMENT_MODEL` = `"qwen3.5:4b"` is the default selection; `enhancement_model_spec(name)` looks up a catalog entry and `resolve_enhancement_model(name)` validates a persisted choice. The settings panel's collapsible Enhancer drawer (AI modes only) cycles the model, shows its size + hardware requirement + Ready/Download state, and persists the choice.
 - `SAMPLE_RATE` — 16000 Hz
 - `HOTKEY` — Ctrl+Shift+Space (via `WH_KEYBOARD_LL` hook)
 - `SILENCE_RMS_THRESHOLD` — `0.015`

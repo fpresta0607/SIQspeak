@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 
 from siqspeak.overlay.panels.settings_panel import (
+    ENHANCER_DRAWER_BODY_H,
+    SETTINGS_ROW_H,
     SettingsAction,
     _mode_display,
     _model_requirement_label,
@@ -27,13 +29,12 @@ from siqspeak.state import AppState
 def test_action_enum_has_stable_string_values() -> None:
     assert SettingsAction.MICROPHONE == "microphone"
     assert SettingsAction.MODE == "mode"
+    assert SettingsAction.ENHANCER == "enhancer"
     assert SettingsAction.WORKSPACE == "workspace"
-    assert SettingsAction.ENHANCER_MODEL == "enhancer_model"
-    assert SettingsAction.INSTALL_MODEL == "install_model"
     assert SettingsAction.QUIT == "quit"
 
 
-def test_default_mode_layout_hides_model_rows_and_maps_each_action() -> None:
+def test_default_mode_layout_hides_enhancer_and_maps_each_action() -> None:
     state = AppState()  # default mode: no local model needed
     rows = _settings_layout(state)
 
@@ -43,12 +44,13 @@ def test_default_mode_layout_hides_model_rows_and_maps_each_action() -> None:
         SettingsAction.WORKSPACE,
         SettingsAction.QUIT,
     ]
+    assert SettingsAction.ENHANCER not in [row.action for row in rows]
     for row in rows:
         assert settings_action_at_y(state, row.y + 1) == row.action
 
 
 @pytest.mark.parametrize("mode", ["code", "email"])
-def test_active_mode_layout_shows_model_rows_and_maps_each_action(mode: str) -> None:
+def test_active_mode_layout_shows_enhancer_after_mode(mode: str) -> None:
     state = AppState()
     state.enhancement_mode = mode
     rows = _settings_layout(state)
@@ -56,13 +58,43 @@ def test_active_mode_layout_shows_model_rows_and_maps_each_action(mode: str) -> 
     assert [row.action for row in rows] == [
         SettingsAction.MICROPHONE,
         SettingsAction.MODE,
+        SettingsAction.ENHANCER,
         SettingsAction.WORKSPACE,
-        SettingsAction.ENHANCER_MODEL,
-        SettingsAction.INSTALL_MODEL,
         SettingsAction.QUIT,
     ]
     for row in rows:
         assert settings_action_at_y(state, row.y + 1) == row.action
+
+
+@pytest.mark.parametrize("mode", ["code", "email"])
+def test_enhancer_drawer_band_height_and_hit_test(mode: str) -> None:
+    collapsed = AppState()
+    collapsed.enhancement_mode = mode
+    expanded = AppState()
+    expanded.enhancement_mode = mode
+    expanded.enhancer_drawer_expanded = True
+
+    collapsed_row = next(r for r in _settings_layout(collapsed) if r.action == SettingsAction.ENHANCER)
+    expanded_row = next(r for r in _settings_layout(expanded) if r.action == SettingsAction.ENHANCER)
+
+    assert collapsed_row.height == SETTINGS_ROW_H
+    assert expanded_row.height == SETTINGS_ROW_H + ENHANCER_DRAWER_BODY_H
+
+    # The whole band (header + expanded body) maps to ENHANCER.
+    for y in (collapsed_row.y + 1, collapsed_row.y + SETTINGS_ROW_H - 1):
+        assert settings_action_at_y(collapsed, y) == SettingsAction.ENHANCER
+    for y in (expanded_row.y + 1, expanded_row.y + expanded_row.height - 1):
+        assert settings_action_at_y(expanded, y) == SettingsAction.ENHANCER
+
+
+def test_expanded_enhancer_grows_panel_height() -> None:
+    collapsed = AppState()
+    collapsed.enhancement_mode = "code"
+    expanded = AppState()
+    expanded.enhancement_mode = "code"
+    expanded.enhancer_drawer_expanded = True
+
+    assert _settings_panel_height(expanded) == _settings_panel_height(collapsed) + ENHANCER_DRAWER_BODY_H
 
 
 @pytest.mark.parametrize(
@@ -175,6 +207,16 @@ def test_render_signature_changes_when_enhancement_model_changes() -> None:
     assert _settings_render_signature(state) != before
 
 
+def test_render_signature_changes_when_drawer_toggles() -> None:
+    state = AppState()
+    state.enhancement_mode = "code"
+    before = _settings_render_signature(state)
+
+    state.enhancer_drawer_expanded = True
+
+    assert _settings_render_signature(state) != before
+
+
 def test_model_requirement_label_reflects_selected_model() -> None:
     state = AppState()
     state.enhancement_model = "qwen3.5:9b"
@@ -254,6 +296,24 @@ def _assert_premultiplied_bgra(buf: np.ndarray, width: int, height: int) -> None
         lambda s: setattr(s, "enhancement_model", "qwen3.5:9b"),
         lambda s: (
             setattr(s, "enhancement_model", "qwen3.5:9b"),
+            setattr(s, "enhancement_status", "ready"),
+        ),
+        # Enhancer drawer expanded across representative statuses.
+        lambda s: (
+            setattr(s, "enhancement_mode", "code"),
+            setattr(s, "enhancer_drawer_expanded", True),
+            setattr(s, "enhancement_status", "model_missing"),
+            setattr(s, "enhancement_hardware", "31.7 GB RAM, 8.0 GB GPU"),
+        ),
+        lambda s: (
+            setattr(s, "enhancement_mode", "email"),
+            setattr(s, "enhancer_drawer_expanded", True),
+            setattr(s, "enhancement_status", "pulling"),
+            setattr(s, "enhancement_pull_progress", 0.6),
+        ),
+        lambda s: (
+            setattr(s, "enhancement_mode", "code"),
+            setattr(s, "enhancer_drawer_expanded", True),
             setattr(s, "enhancement_status", "ready"),
         ),
     ],

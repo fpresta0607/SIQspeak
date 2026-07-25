@@ -21,6 +21,7 @@ from siqspeak.config import (
 from siqspeak.enhancement.hardware import can_run_model
 from siqspeak.interaction.hover import _is_cursor_over_hwnd
 from siqspeak.overlay.panels.settings_panel import (
+    ENHANCER_MODEL_SUBZONE_H,
     MIC_ROW_H,
     SETTINGS_ROW_H,
     SettingsAction,
@@ -258,6 +259,24 @@ def _handle_mic_click(state: AppState, ry: int) -> None:
             save_state_config(state)
 
 
+def _handle_enhancer_click(state: AppState, ry: int) -> None:
+    """Toggle the enhancer drawer or act on a sub-zone within its expanded body.
+
+    Sub-zone boundaries mirror the y-offsets ``_draw_enhancer_drawer`` renders.
+    """
+    row = next(r for r in _settings_layout(state) if r.action == SettingsAction.ENHANCER)
+    header_bottom = row.y + SETTINGS_ROW_H
+    if ry < header_bottom:
+        state.enhancer_drawer_expanded = not state.enhancer_drawer_expanded
+        return
+    if not state.enhancer_drawer_expanded:
+        return
+    if ry < header_bottom + ENHANCER_MODEL_SUBZONE_H:
+        _cycle_enhancer_model(state)
+    else:
+        _install_model_action(state)
+
+
 def _handle_settings_click(state: AppState) -> None:
     """Route a click within the settings panel to its action.
 
@@ -291,14 +310,12 @@ def _handle_settings_click(state: AppState) -> None:
         _handle_mic_click(state, ry)
     elif action == SettingsAction.MODE:
         _cycle_enhancement_mode(state)
+    elif action == SettingsAction.ENHANCER:
+        _handle_enhancer_click(state, ry)
     elif action == SettingsAction.WORKSPACE:
         folder = select_folder(hwnd=state.settings_panel_hwnd or 0)
         if _apply_workspace_selection(state, folder):
             _refresh_enhancer_status(state)
-    elif action == SettingsAction.ENHANCER_MODEL:
-        _cycle_enhancer_model(state)
-    elif action == SettingsAction.INSTALL_MODEL:
-        _install_model_action(state)
     elif action == SettingsAction.QUIT:
         state.should_quit = True
         if state.icon:
