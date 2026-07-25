@@ -46,7 +46,8 @@ OLLAMA_DOWNLOAD_URL = "https://ollama.com/download/windows"
 SETTINGS_PAD = 12
 SETTINGS_GAP = 10
 SETTINGS_ROW_H = 48
-SETTINGS_STATUS_H = 84  # model requirement + machine readout + status/action
+ENHANCER_DRAWER_BODY_H = 96  # extra height below the header when the drawer is expanded
+ENHANCER_MODEL_SUBZONE_H = 30  # top body sub-zone = model-cycle target (shared with click handler)
 QUIT_BTN_H = 44
 SETTINGS_CARD_MARGIN_X = 16
 SETTINGS_CARD_PAD_X = 14
@@ -61,9 +62,8 @@ class SettingsAction(str, Enum):
 
     MICROPHONE = "microphone"
     MODE = "mode"
+    ENHANCER = "enhancer"
     WORKSPACE = "workspace"
-    ENHANCER_MODEL = "enhancer_model"
-    INSTALL_MODEL = "install_model"
     QUIT = "quit"
 
 
@@ -88,13 +88,15 @@ def _settings_layout(state: AppState) -> list[SettingsRow]:
     plan: list[tuple[SettingsAction, int]] = [
         (SettingsAction.MICROPHONE, _mic_section_height(state)),
         (SettingsAction.MODE, SETTINGS_ROW_H),
-        (SettingsAction.WORKSPACE, SETTINGS_ROW_H),
     ]
-    # The enhancer model + install/status only matter when an AI mode is active;
-    # Default types the raw transcript and needs no local model.
+    # The enhancer drawer only matters when an AI mode is active; Default types
+    # the raw transcript and needs no local model. It sits directly under Mode.
     if state.enhancement_mode != "default":
-        plan.append((SettingsAction.ENHANCER_MODEL, SETTINGS_ROW_H))
-        plan.append((SettingsAction.INSTALL_MODEL, SETTINGS_STATUS_H))
+        drawer_h = SETTINGS_ROW_H
+        if state.enhancer_drawer_expanded:
+            drawer_h += ENHANCER_DRAWER_BODY_H
+        plan.append((SettingsAction.ENHANCER, drawer_h))
+    plan.append((SettingsAction.WORKSPACE, SETTINGS_ROW_H))
     plan.append((SettingsAction.QUIT, QUIT_BTN_H))
     rows: list[SettingsRow] = []
     for action, height in plan:
@@ -194,6 +196,7 @@ def _settings_render_signature(state: AppState) -> tuple:
         state.workspace_detected_root,
         state.enhancement_error,
         state.enhancement_hardware,
+        state.enhancer_drawer_expanded,
     )
 
 
@@ -250,18 +253,14 @@ def _render_settings_panel(state: AppState) -> tuple[np.ndarray, int, int]:
     _draw_mode(draw, state, rows[SettingsAction.MODE],
                text_left, value_right, font_label, font_meta, font_chip)
 
+    if SettingsAction.ENHANCER in rows:
+        _draw_card(draw, card_left, rows[SettingsAction.ENHANCER], card_right)
+        _draw_enhancer_drawer(draw, state, rows[SettingsAction.ENHANCER],
+                              text_left, value_right, font_label, font_meta, font_chip)
+
     _draw_card(draw, card_left, rows[SettingsAction.WORKSPACE], card_right)
     _draw_workspace(draw, state, rows[SettingsAction.WORKSPACE],
                     text_left, value_right, font_label, font_meta, font_chip)
-
-    if SettingsAction.ENHANCER_MODEL in rows:
-        _draw_card(draw, card_left, rows[SettingsAction.ENHANCER_MODEL], card_right)
-        _draw_model(draw, state, rows[SettingsAction.ENHANCER_MODEL],
-                    text_left, value_right, font_label, font_meta, font_chip)
-
-        _draw_card(draw, card_left, rows[SettingsAction.INSTALL_MODEL], card_right)
-        _draw_status(draw, state, rows[SettingsAction.INSTALL_MODEL],
-                     text_left, value_right, card_left, card_right, font_label, font_meta, font_chip)
 
     _draw_quit(draw, rows[SettingsAction.QUIT], card_left, card_right, panel_w, font_btn)
 
@@ -350,37 +349,53 @@ def _draw_workspace(draw, state, row, text_left, value_right, font_label, font_m
     draw.text((text_left, row.y + 27), path, font=font_meta, fill=(*GRAY, 210))
 
 
-def _draw_model(draw, state, row, text_left, value_right, font_label, font_meta, font_chip) -> None:
-    draw.text((text_left, row.y + 7), "Enhancer model", font=font_label, fill=(*WHITE, 255))
+def _draw_enhancer_drawer(
+    draw, state, row, text_left, value_right, font_label, font_meta, font_chip,
+) -> None:
+    """One collapsible "Enhancer" drawer: header summary + (expanded) full controls.
 
-    label, color = _model_state_display(state)
-    chip_w = int(draw.textlength(label, font=font_chip)) + 16
+    Body sub-zone y-offsets (from ``body_top = row.y + SETTINGS_ROW_H``) are kept
+    simple because ``_handle_enhancer_click`` hit-tests against the same split:
+      [0 .. ENHANCER_MODEL_SUBZONE_H)  model + requirement line  -> cycle model
+      [ENHANCER_MODEL_SUBZONE_H .. end) hardware readout + status/action -> install
+    """
+    # --- Header band (top SETTINGS_ROW_H): chevron + label + summary chip. ---
+    header_cy = row.y + SETTINGS_ROW_H // 2
+    chevron = "▼" if state.enhancer_drawer_expanded else "▶"
+    draw.text((text_left, header_cy - 9), f"{chevron} Enhancer", font=font_label, fill=(*WHITE, 255))
+
+    state_label, state_color = _model_state_display(state)
+    summary = f"{state.enhancement_model} · {state_label}"
+    chip_w = int(draw.textlength(summary, font=font_chip)) + 16
     chip_x1 = value_right
     chip_x0 = chip_x1 - chip_w
-    chip_y = row.y + 8
+    chip_y = header_cy - 9
     draw.rounded_rectangle(
         [chip_x0, chip_y, chip_x1, chip_y + 18], radius=9, fill=(*_ACCENT_SOFT, 255),
     )
-    draw.text((chip_x0 + 8, chip_y + 2), label, font=font_chip, fill=(*color, 255))
+    draw.text((chip_x0 + 8, chip_y + 2), summary, font=font_chip, fill=(*state_color, 255))
 
+    if not state.enhancer_drawer_expanded:
+        return
+
+    # --- Expanded body. ---
+    body_top = row.y + SETTINGS_ROW_H
+
+    # Model + requirement line (click target to cycle the model).
     requirement = _truncate_to_width(
         draw, _model_requirement_label(state), font_meta, value_right - text_left,
     )
-    draw.text((text_left, row.y + 27), requirement, font=font_meta, fill=(*GRAY, 210))
+    draw.text((text_left, body_top + 6), requirement, font=font_meta, fill=(*CYAN, 220))
 
-
-def _draw_status(
-    draw, state, row, text_left, value_right, card_left, card_right, font_label, font_meta, font_chip,
-) -> None:
     # Detected-hardware readout for the selected model.
     if state.enhancement_hardware:
         readout = _truncate_to_width(draw, state.enhancement_hardware, font_meta, value_right - text_left)
-        draw.text((text_left, row.y + 30), readout, font=font_meta, fill=(*GRAY, 210))
+        draw.text((text_left, body_top + 34), readout, font=font_meta, fill=(*GRAY, 210))
 
     message, action = _status_display(state)
 
     if state.enhancement_status == "pulling":
-        draw.text((text_left, row.y + 50), message, font=font_meta, fill=(*CYAN, 230))
+        draw.text((text_left, body_top + 60), message, font=font_meta, fill=(*CYAN, 230))
         bar_y = row.y + row.height - 12
         bar_left = text_left
         bar_right = value_right
@@ -401,14 +416,14 @@ def _draw_status(
     elif state.enhancement_status == "error":
         msg_color = (220, 90, 90, 230)
     message = _truncate_to_width(draw, message, font_meta, value_right - text_left - 110)
-    draw.text((text_left, row.y + 52), message, font=font_meta, fill=msg_color)
+    draw.text((text_left, body_top + 62), message, font=font_meta, fill=msg_color)
 
     if action:
         btn_w = int(draw.textlength(action, font=font_chip)) + 24
         btn_h = 26
         bx1 = value_right
         bx0 = bx1 - btn_w
-        by0 = row.y + 48
+        by0 = body_top + 58
         draw.rounded_rectangle(
             [bx0, by0, bx1, by0 + btn_h], radius=8, fill=(*_ACCENT_SOFT, 255),
             outline=(*CYAN, 200), width=1,
@@ -495,3 +510,4 @@ def _hide_settings_panel(state: AppState) -> None:
         ctypes.windll.user32.ShowWindow(state.settings_panel_hwnd, 0)
         state.active_panel = None
         state.mic_expanded = False
+        state.enhancer_drawer_expanded = False

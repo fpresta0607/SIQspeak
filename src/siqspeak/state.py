@@ -120,6 +120,7 @@ class AppState:
     enhancement_error: str | None = None
     enhancement_hardware: str | None = None  # detected RAM/VRAM readout (background probe)
     enhancement_pull_progress: float = 0.0
+    enhancer_drawer_expanded: bool = False  # settings drawer collapse state (ephemeral UI)
     workspace_override: str | None = None
     workspace_detected_root: str | None = None
     # Live workspace indicator bookkeeping (message-loop only)
